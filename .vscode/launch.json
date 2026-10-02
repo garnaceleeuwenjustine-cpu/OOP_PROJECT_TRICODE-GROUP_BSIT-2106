@@ -1,0 +1,14 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "java",
+      "name": "Run Beasts Simple Animation",
+      "request": "launch",
+      "mainClass": "echoesofluma.BattleDemo",
+      "cwd": "${workspaceFolder}/beasts_simple_animation",
+      "classPaths": ["${workspaceFolder}/beasts_simple_animation/bin"],
+      "preLaunchTask": "Build Beasts Simple Animation"
+    }
+  ]
+}

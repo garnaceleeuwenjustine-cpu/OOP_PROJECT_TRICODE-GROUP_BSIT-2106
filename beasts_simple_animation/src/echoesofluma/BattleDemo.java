@@ -23,6 +23,8 @@ import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.event.ActionEvent;
+import java.awt.event.KeyAdapter;
+import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
@@ -43,9 +45,6 @@ public final class BattleDemo {
     private static final Font UI_BOLD = new Font(Font.SANS_SERIF, Font.BOLD, 15);
     private static final Font UI_SMALL = new Font(Font.SANS_SERIF, Font.PLAIN, 12);
     private static final Font DISPLAY = new Font(Font.SANS_SERIF, Font.BOLD, 23);
-    private static final Font PIXEL_TEXT = new Font(Font.MONOSPACED, Font.PLAIN, 14);
-    private static final Font PIXEL_BOLD = new Font(Font.MONOSPACED, Font.BOLD, 14);
-    private static final Font PIXEL_SMALL = new Font(Font.MONOSPACED, Font.PLAIN, 11);
 
     private enum Kind { DAMAGE, BUFF, DEBUFF }
     private enum Phase { SELECT, SUMMONING, COMMAND, MOVE_SELECT, ANIMATING, RECALL_PLAYER, RECALL_ENEMY, RESULT }
@@ -307,6 +306,7 @@ public final class BattleDemo {
         arena.frameNo = 0;
         arena.message = player.name + "'s capsule is opening!";
         setActionsEnabled(false);
+        arena.requestFocusInWindow();
         cards.setVisible(false);
         frame.revalidate();
         updateCaptureRule();
@@ -364,6 +364,7 @@ public final class BattleDemo {
         arena.frameNo = 0;
         arena.message = arena.player.name + " used " + arena.move.name + "!";
         setActionsEnabled(false);
+        arena.requestFocusInWindow();
         refreshMoveButtons();
         showCard("command");
         arena.repaint();
@@ -379,6 +380,7 @@ public final class BattleDemo {
         arena.effectKind = Kind.BUFF; arena.effectActor = arena.player; arena.phase = Phase.ANIMATING; arena.frameNo = 0;
         arena.message = "Potion restored 32 HP. " + arena.potions + " left.";
         setActionsEnabled(false);
+        arena.requestFocusInWindow();
         arena.repaint();
     }
 
@@ -387,6 +389,7 @@ public final class BattleDemo {
         arena.message = "You returned " + arena.player.name + " to its capsule and escaped.";
         arena.phase = Phase.RECALL_PLAYER; arena.frameNo = 0; arena.afterRecall = Phase.SELECT;
         setActionsEnabled(false);
+        arena.requestFocusInWindow();
         arena.repaint();
     }
 
@@ -397,6 +400,7 @@ public final class BattleDemo {
         arena.phase = Phase.ANIMATING; arena.frameNo = 0; arena.capturing = true;
         arena.message = "Capsule thrown! " + arena.enemy.name + " is being captured.";
         setActionsEnabled(false);
+        arena.requestFocusInWindow();
         arena.repaint();
     }
 
@@ -453,18 +457,72 @@ public final class BattleDemo {
         int tick;
         int playerTurns;
         int menuFocus;
+        private String lastDialogText = "";
+        private Phase lastDialogPhase;
+        private int visibleDialogChars;
+        private boolean dialogDismissed;
         private final Random random = new Random(7);
 
         Arena() {
             setPreferredSize(new Dimension(W, H));
             setMinimumSize(new Dimension(700, 410));
             setBackground(new Color(220, 238, 244));
+            setFocusable(true);
             addMouseListener(new MouseAdapter() {
-                @Override public void mousePressed(MouseEvent e) { handleMenuClick(e.getX(), e.getY()); }
+                @Override public void mousePressed(MouseEvent e) {
+                    requestFocusInWindow();
+                    int[] point = toVirtual(e.getX(), e.getY());
+                    if (isDialogActive() && point[0] >= 16 && point[0] <= 944 && point[1] >= 447 && point[1] <= 526) {
+                        advanceDialog();
+                    } else {
+                        handleMenuClick(e.getX(), e.getY());
+                    }
+                }
+            });
+            addKeyListener(new KeyAdapter() {
+                @Override public void keyPressed(KeyEvent e) {
+                    if (isDialogActive() && (e.getKeyCode() == KeyEvent.VK_SPACE || e.getKeyCode() == KeyEvent.VK_ENTER || e.getKeyCode() == KeyEvent.VK_Z)) {
+                        advanceDialog();
+                    }
+                }
             });
             addMouseMotionListener(new MouseAdapter() {
                 @Override public void mouseMoved(MouseEvent e) { updateMenuFocus(e.getX(), e.getY()); }
             });
+        }
+
+        private boolean isDialogActive() {
+            return phase == Phase.SUMMONING || phase == Phase.ANIMATING || phase == Phase.RECALL_PLAYER
+                || phase == Phase.RECALL_ENEMY || phase == Phase.RESULT;
+        }
+
+        private String dialogText() {
+            if (phase == Phase.SUMMONING && player != null) return "Capsule opens. Releasing " + player.name + "...";
+            return message == null ? "" : message;
+        }
+
+        private void syncDialog() {
+            String text = dialogText();
+            if (phase != lastDialogPhase || !text.equals(lastDialogText)) {
+                lastDialogPhase = phase;
+                lastDialogText = text;
+                visibleDialogChars = 0;
+                dialogDismissed = false;
+            }
+        }
+
+        private boolean dialogCanContinue() {
+            return dialogDismissed;
+        }
+
+        private void advanceDialog() {
+            syncDialog();
+            if (!dialogDismissed && visibleDialogChars < lastDialogText.length()) {
+                visibleDialogChars = lastDialogText.length();
+            } else {
+                dialogDismissed = true;
+            }
+            repaint();
         }
 
         private void updateMenuFocus(int mouseX, int mouseY) {
@@ -518,6 +576,10 @@ public final class BattleDemo {
         void startClock() {
             new Timer(35, (ActionEvent e) -> {
                 tick++;
+                syncDialog();
+                if (isDialogActive() && !dialogDismissed && visibleDialogChars < lastDialogText.length()) {
+                    visibleDialogChars = Math.min(lastDialogText.length(), visibleDialogChars + 2);
+                }
                 if (phase != Phase.SELECT && phase != Phase.COMMAND && phase != Phase.MOVE_SELECT && phase != Phase.RESULT) {
                     frameNo++;
                     advanceAnimation();
@@ -527,11 +589,11 @@ public final class BattleDemo {
         }
 
         private void advanceAnimation() {
-            if (phase == Phase.SUMMONING && frameNo > 32) {
+            if (phase == Phase.SUMMONING && frameNo > 32 && dialogCanContinue()) {
                 phase = Phase.COMMAND; frameNo = 0; message = player.name + " is ready! Choose Fight, Bag, Run, or Capture.";
                 setActionsEnabled(true);
             } else if (phase == Phase.ANIMATING) {
-                if (capturing && frameNo >= 28) {
+                if (capturing && frameNo >= 28 && dialogCanContinue()) {
                     capturing = false;
                     captureSuccess = true;
                     phase = Phase.RECALL_ENEMY; frameNo = 0; afterRecall = Phase.RESULT;
@@ -539,7 +601,7 @@ public final class BattleDemo {
                 } else if (!capturing && frameNo == 8) {
                     if (effectActor == enemy) applyEnemyMove();
                     else if (move != null) applyMove();
-                } else if (!capturing && move != null && frameNo >= 20) {
+                } else if (!capturing && move != null && frameNo >= 20 && dialogCanContinue()) {
                     if (effectActor == enemy) finishEnemyTurn();
                     else {
                         Move completedMove = move;
@@ -552,16 +614,16 @@ public final class BattleDemo {
                             enemyTurn();
                         }
                     }
-                } else if (!capturing && move == null && frameNo >= 18) {
+                } else if (!capturing && move == null && frameNo >= 18 && dialogCanContinue()) {
                     boolean usedBagItem = effectActor == player;
                     phase = Phase.COMMAND; frameNo = 0; effectKind = null; effectActor = null;
                     if (usedBagItem) enemyTurn();
                 }
-            } else if (phase == Phase.RECALL_PLAYER && frameNo >= 30) {
+            } else if (phase == Phase.RECALL_PLAYER && frameNo >= 30 && dialogCanContinue()) {
                 Phase destination = afterRecall;
                 if (player != null && player.hp <= 0) player.hp = 100;
                 returnToCapsules(destination == Phase.SELECT ? message : "Battle ended.");
-            } else if (phase == Phase.RECALL_ENEMY && frameNo >= 30) {
+            } else if (phase == Phase.RECALL_ENEMY && frameNo >= 30 && dialogCanContinue()) {
                 phase = Phase.RESULT; frameNo = 0;
                 if (captureSuccess) {
                     message = enemy.name + " was captured and returned to your capsules.";
@@ -651,7 +713,153 @@ public final class BattleDemo {
             int ox = (getWidth() - drawW) / 2, oy = (getHeight() - drawH) / 2;
             screen.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
             screen.drawImage(pixelFrame, ox, oy, drawW, drawH, null);
+            drawReadableOverlayText(screen, ox, oy, scale);
             screen.dispose();
+        }
+
+        private void drawReadableOverlayText(Graphics2D target, int ox, int oy, double scale) {
+            Graphics2D g = (Graphics2D) target.create();
+            g.translate(ox, oy);
+            g.scale(scale / 3.0, scale / 3.0);
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+            g.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_ON);
+            g.setColor(INK);
+            if (phase == Phase.SELECT) {
+                drawSelectionOverlay(g);
+            } else {
+                drawBattleOverlay(g);
+            }
+            g.dispose();
+        }
+
+        private void drawSelectionOverlay(Graphics2D g) {
+            Beast beast = (Beast) playerChoice.getSelectedItem();
+            if (beast == null) beast = preview;
+            g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 16)); g.setColor(MUTED);
+            g.drawString("CAPSULE SELECTION", 82, 72);
+            g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 25)); g.setColor(INK);
+            g.drawString("Choose your companion", 82, 107);
+            g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 22));
+            centered(g, beast.name, 601, 405);
+            g.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 16)); g.setColor(MUTED);
+            centered(g, beast.types(), 601, 428);
+            g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 16)); g.setColor(new Color(36, 121, 102));
+            centered(g, "Choose one of 27 capsules below", 337, 414);
+        }
+
+        private void drawBattleOverlay(Graphics2D g) {
+            if (player != null && enemy != null) {
+                drawStatusText(g, player, 102, 27, false);
+                drawStatusText(g, enemy, 666, 27, true);
+                if (player.buffTurns > 0 && phase != Phase.RECALL_PLAYER) drawStatusSigilText(g, 312, 300, "POWER UP");
+                if (enemy.weakenedTurns > 0 && phase != Phase.RECALL_ENEMY) drawStatusSigilText(g, 684, 298, "GUARD DOWN");
+            }
+            if (phase == Phase.COMMAND) drawCommandText(g);
+            else if (phase == Phase.MOVE_SELECT) drawMoveText(g);
+            else if (phase == Phase.SUMMONING) {
+                g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 17));
+                centered(g, "CAPSULE OPENING", 477, 169);
+            } else if (phase == Phase.RESULT) {
+                g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 22));
+                centered(g, "ENCOUNTER COMPLETE", 480, 252);
+                g.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 16)); g.setColor(MUTED);
+                centered(g, "Choose another capsule to continue.", 480, 278);
+            }
+            if (isDialogActive() && !dialogDismissed) drawDialogText(g);
+        }
+
+        private void drawStatusText(Graphics2D g, Beast beast, int x, int y, boolean right) {
+            g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 18)); g.setColor(INK);
+            String name = beast.name;
+            if (g.getFontMetrics().stringWidth(name) > 163) {
+                g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 15));
+            }
+            if (right) rightText(g, name, x + 180, y + 29); else g.drawString(name, x + 18, y + 29);
+            g.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13)); g.setColor(MUTED);
+            if (right) rightText(g, beast.types().toUpperCase(Locale.ROOT), x + 180, y + 48);
+            else g.drawString(beast.types().toUpperCase(Locale.ROOT), x + 18, y + 48);
+            g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 14)); g.setColor(INK);
+            String hp = beast.hp + "/100 HP";
+            if (right) rightText(g, hp, x + 180, y + 82); else g.drawString(hp, x + 18, y + 82);
+        }
+
+        private void drawStatusSigilText(Graphics2D g, int x, int y, String label) {
+            g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 11));
+            g.setColor(new Color(27, 37, 53)); centered(g, label, x, y + 4);
+        }
+
+        private void drawCommandText(Graphics2D g) {
+            String[] labels = {"FIGHT", "BAG", "RUN", trainerBattle ? "LOCKED" : "CAPTURE"};
+            int[] xs = {50, 182, 50, 182};
+            int[] ys = {443, 443, 491, 491};
+            g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 19));
+            for (int i = 0; i < labels.length; i++) {
+                g.setColor(i == 3 && trainerBattle ? new Color(137, 143, 131) : INK);
+                g.drawString(labels[i], xs[i], ys[i]);
+            }
+        }
+
+        private void drawMoveText(Graphics2D g) {
+            g.setColor(new Color(44, 58, 43)); g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 16));
+            g.drawString("CHOOSE A MOVE", 39, 379);
+            if (player == null) return;
+            g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 14));
+            for (int i = 0; i < player.moves.size(); i++) {
+                Move option = player.moves.get(i);
+                int y = 404 + i * 23;
+                g.setColor(INK);
+                String label = (i + 1) + "  " + option.name + "  /  " + option.type.toUpperCase(Locale.ROOT);
+                g.drawString(ellipsize(g, label, 359), 61, y);
+            }
+            g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 13)); g.setColor(MUTED);
+            g.drawString("BACK", 47, 519);
+        }
+
+        private void drawDialogText(Graphics2D g) {
+            syncDialog();
+            String text = lastDialogText.substring(0, Math.min(visibleDialogChars, lastDialogText.length()));
+            List<String> lines = wrapText(g, text, 848);
+            g.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 18));
+            g.setColor(new Color(27, 37, 53));
+            int[] baselines = {481, 505};
+            for (int i = 0; i < Math.min(2, lines.size()); i++) g.drawString(lines.get(i), 42, baselines[i]);
+            if (visibleDialogChars >= lastDialogText.length()) {
+                g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 11));
+                rightText(g, "SPACE / CLICK", 928, 469);
+                g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 14));
+                centered(g, "▼", 918, 516);
+            }
+        }
+
+        private List<String> wrapText(Graphics2D g, String text, int maxWidth) {
+            List<String> lines = new ArrayList<>();
+            if (text.isEmpty()) return lines;
+            Font saved = g.getFont();
+            g.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 18));
+            StringBuilder line = new StringBuilder();
+            for (String word : text.split(" ", -1)) {
+                String candidate = line.length() == 0 ? word : line + " " + word;
+                if (line.length() > 0 && g.getFontMetrics().stringWidth(candidate) > maxWidth) {
+                    lines.add(line.toString());
+                    line.setLength(0);
+                    line.append(word);
+                } else {
+                    if (line.length() > 0) line.append(' ');
+                    line.append(word);
+                }
+            }
+            if (line.length() > 0) lines.add(line.toString());
+            g.setFont(saved);
+            if (lines.size() > 2) {
+                lines = new ArrayList<>(lines.subList(0, 2));
+                String last = lines.get(1);
+                g.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 18));
+                while (!last.isEmpty() && g.getFontMetrics().stringWidth(last + "...") > maxWidth) last = last.substring(0, last.length() - 1);
+                lines.set(1, last + "...");
+                g.setFont(saved);
+            }
+            return lines;
         }
 
         private void drawBackdrop(Graphics2D g) {
@@ -708,25 +916,18 @@ public final class BattleDemo {
             g.setColor(new Color(24, 38, 53, 20)); g.fillRoundRect(45, 36, 870, 430, 34, 34);
             g.setColor(new Color(255, 255, 255, 207)); g.fillRoundRect(50, 32, 860, 426, 32, 32);
             g.setColor(new Color(214, 225, 232)); g.setStroke(new BasicStroke(2)); g.drawRoundRect(50, 32, 860, 426, 32, 32);
-            g.setFont(UI_SMALL); g.setColor(MUTED); g.drawString("CAPSULE SELECTION", 82, 72);
-            g.setFont(DISPLAY); g.setColor(INK); g.drawString("Choose your companion", 82, 107);
             Beast b = (Beast) playerChoice.getSelectedItem(); if (b == null) b = preview;
             drawCapsule(g, 286, 270, 1.0, 0, 0, false);
             g.setColor(new Color(29, 45, 62, 32)); g.fillOval(515, 359, 170, 28);
             drawSprite(g, b, 526, 173, 155, 178, 1, 0, 0, 1f, false);
-            g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 20)); g.setColor(INK); centered(g, b.name, 601, 405);
-            g.setFont(UI); g.setColor(MUTED); centered(g, b.types(), 601, 428);
-            g.setFont(UI_BOLD); g.setColor(new Color(36, 121, 102)); centered(g, "Choose one of 27 capsules below", 337, 414);
             drawPixelSparkles(g, 730, 190, new Color(255, 215, 104), 13);
         }
 
         private void drawBattle(Graphics2D g) {
             if (phase == Phase.RESULT) {
                 drawBattlefield(g, false);
-                drawMessage(g);
+                if (!dialogDismissed) drawMessage(g);
                 drawPixelPanel(g, 274, 208, 412, 104);
-                g.setColor(INK); g.setFont(PIXEL_BOLD); centered(g, "ENCOUNTER COMPLETE", W / 2, 251);
-                g.setColor(MUTED); g.setFont(PIXEL_TEXT); centered(g, "Choose another capsule to continue.", W / 2, 282);
                 return;
             }
             drawBattlefield(g, true);
@@ -736,7 +937,7 @@ public final class BattleDemo {
             else if (phase == Phase.RECALL_ENEMY) drawRecall(g, true);
             else if (phase == Phase.COMMAND) drawCommandMenu(g);
             else if (phase == Phase.MOVE_SELECT) drawMoveMenu(g);
-            if (phase != Phase.COMMAND && phase != Phase.MOVE_SELECT) drawMessage(g);
+            if (phase != Phase.COMMAND && phase != Phase.MOVE_SELECT && !dialogDismissed) drawMessage(g);
         }
 
         private void drawBattlefield(Graphics2D g, boolean sprites) {
@@ -806,48 +1007,30 @@ public final class BattleDemo {
             g.setColor(new Color(24, 31, 24)); g.fillRect(x, y, 195, 91);
             g.setColor(new Color(248, 248, 232)); g.fillRect(x + 6, y + 6, 183, 79);
             g.setColor(new Color(66, 75, 57)); g.fillRect(x + 10, y + 10, 175, 3);
-            g.setColor(INK); g.setFont(PIXEL_BOLD);
-            if (right) rightText(g, beast.name, x + 180, y + 27); else g.drawString(beast.name, x + 18, y + 27);
-            g.setFont(PIXEL_SMALL); g.setColor(MUTED);
-            if (right) rightText(g, beast.types(), x + 180, y + 48); else g.drawString(beast.types(), x + 18, y + 48);
             int bx = x + 49, by = y + 59, bw = 126;
             g.setColor(new Color(39, 47, 36)); g.drawRect(bx - 2, by - 2, bw + 4, 14);
             g.setColor(new Color(200, 213, 177)); g.fillRect(bx, by, bw, 10);
             g.setColor(beast.hp > 45 ? new Color(56, 163, 51) : beast.hp > 20 ? new Color(226, 173, 48) : new Color(207, 68, 48));
             g.fillRect(bx, by, Math.max(0, bw * beast.hp / 100), 10);
-            g.setFont(PIXEL_SMALL); g.setColor(INK);
-            String hp = beast.hp + "/100";
-            if (right) rightText(g, hp, x + 180, y + 82); else g.drawString(hp, x + 18, y + 82);
         }
 
         private void drawCommandMenu(Graphics2D g) {
             drawPixelPanel(g, 20, 396, 270, 130);
-            g.setFont(PIXEL_BOLD); g.setColor(INK);
-            String[] labels = {"FIGHT", "BAG", "RUN", trainerBattle ? "LOCKED" : "CAPTURE"};
             int[] xs = {50, 182, 50, 182};
             int[] ys = {443, 443, 491, 491};
-            for (int i = 0; i < labels.length; i++) {
+            for (int i = 0; i < xs.length; i++) {
                 if (menuFocus == i) drawMenuArrow(g, xs[i] - 17, ys[i] - 7);
-                g.setColor(i == 3 && trainerBattle ? new Color(137, 143, 131) : INK);
-                g.drawString(labels[i], xs[i], ys[i]);
             }
         }
 
         private void drawMoveMenu(Graphics2D g) {
             drawPixelPanel(g, 20, 354, 410, 172);
-            g.setFont(PIXEL_BOLD); g.setColor(new Color(44, 58, 43)); g.drawString("CHOOSE A MOVE", 39, 379);
-            g.setFont(PIXEL_TEXT);
             for (int i = 0; i < player.moves.size(); i++) {
-                Move option = player.moves.get(i);
                 int y = 404 + i * 23;
                 if (menuFocus == i) drawMenuArrow(g, 29, y - 10);
-                g.setColor(typeColor(option.type)); g.fillRect(47, y - 11, 7, 7);
-                g.setColor(INK);
-                String label = (i + 1) + "  " + option.name + " / " + option.type.toUpperCase(Locale.ROOT);
-                g.drawString(ellipsize(g, label, 359), 61, y);
+                g.setColor(typeColor(player.moves.get(i).type)); g.fillRect(47, y - 11, 7, 7);
             }
             if (menuFocus == 5) drawMenuArrow(g, 29, 508);
-            g.setFont(PIXEL_SMALL); g.setColor(MUTED); g.drawString("BACK", 47, 519);
         }
 
         private void drawPixelPanel(Graphics2D g, int x, int y, int w, int h) {
@@ -874,7 +1057,6 @@ public final class BattleDemo {
                 drawSprite(g, player, (int) (259 + (1 - size) * 40), (int) (205 + (1 - size) * 35), (int) (108 * size), (int) (120 * size), 1, 0, 0, alpha, false);
             }
             g.setColor(new Color(255, 255, 255, 210)); g.fillRoundRect(357, 139, 240, 47, 20, 20);
-            g.setColor(INK); g.setFont(UI_BOLD); centered(g, "RELEASING " + (player == null ? "BEAST" : player.name.toUpperCase(Locale.ROOT)), 477, 168);
         }
 
         private void drawMoveEffect(Graphics2D g) {
@@ -946,11 +1128,7 @@ public final class BattleDemo {
         }
 
         private void drawMessage(Graphics2D g) {
-            drawPixelPanel(g, 118, 459, 724, 57);
-            g.setColor(INK); g.setFont(PIXEL_BOLD);
-            String text = message == null ? "" : message;
-            if (g.getFontMetrics().stringWidth(text) > 688) text = ellipsize(g, text, 688);
-            centered(g, text, W / 2, 494);
+            drawPixelPanel(g, 16, 447, 928, 79);
         }
 
         private void drawCapsule(Graphics2D g, int cx, int cy, double scale, int opening, int lift, boolean large) {
@@ -983,7 +1161,6 @@ public final class BattleDemo {
         private void drawStatusSigil(Graphics2D g, int x, int y, Color color, String label) {
             g.setColor(new Color(255, 255, 255, 215)); g.fillRoundRect(x - 53, y - 15, 106, 27, 12, 12);
             g.setColor(color); g.setStroke(new BasicStroke(2)); g.drawRoundRect(x - 53, y - 15, 106, 27, 12, 12);
-            g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 10)); centered(g, label, x, y + 3);
         }
 
         private void drawProjectile(Graphics2D g, String type, int x, int y, int frame) {
