@@ -2,18 +2,10 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "Build Beasts Simple Animation",
+      "label": "Build Echoes of Luma Battle Demo",
       "type": "process",
-      "command": "javac",
-      "args": [
-        "-encoding",
-        "UTF-8",
-        "-d",
-        "beasts_simple_animation/bin",
-        "-sourcepath",
-        "beasts_simple_animation/src",
-        "beasts_simple_animation/src/echoesofluma/BattleDemo.java"
-      ],
+      "command": "cmd.exe",
+      "args": ["/d", "/c", "${workspaceFolder}\\build.bat"],
       "options": {
         "cwd": "${workspaceFolder}"
       },
