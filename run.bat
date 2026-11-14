@@ -2,4 +2,4 @@
 cd /d "%~dp0"
 call build.bat
 if errorlevel 1 exit /b 1
-"%JAVA_EXE%" -cp bin Main
+"%JAVA_EXE%" -cp out Main

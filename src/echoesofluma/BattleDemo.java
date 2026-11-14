@@ -1,6 +1,5 @@
 package echoesofluma;
 
-import javax.imageio.ImageIO;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
@@ -9,9 +8,13 @@ import javax.swing.JComboBox;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.JOptionPane;
+import javax.swing.JScrollPane;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
+import javax.swing.JTextArea;
 import javax.swing.Timer;
+import java.awt.AlphaComposite;
 import java.awt.BasicStroke;
 import java.awt.BorderLayout;
 import java.awt.Color;
@@ -28,11 +31,21 @@ import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
-import java.io.File;
+import java.awt.geom.Arc2D;
+import java.awt.geom.Ellipse2D;
+import java.awt.geom.Path2D;
+import java.awt.geom.Point2D;
+import java.awt.geom.QuadCurve2D;
+import java.awt.RadialGradientPaint;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Properties;
 import java.util.Random;
+import java.util.Set;
 
 /** A self-contained Swing demo for capsule-based, type-driven beast battles. */
 public final class BattleDemo {
@@ -44,10 +57,41 @@ public final class BattleDemo {
     private static final Font UI = new Font(Font.SANS_SERIF, Font.PLAIN, 15);
     private static final Font UI_BOLD = new Font(Font.SANS_SERIF, Font.BOLD, 15);
     private static final Font UI_SMALL = new Font(Font.SANS_SERIF, Font.PLAIN, 12);
-    private static final Font DISPLAY = new Font(Font.SANS_SERIF, Font.BOLD, 23);
 
     private enum Kind { DAMAGE, BUFF, DEBUFF }
-    private enum Phase { SELECT, SUMMONING, COMMAND, MOVE_SELECT, ATTUNE_REVEAL, ATTUNE_INPUT, ACTION_NOTICE, ANIMATING, RECALL_PLAYER, RECALL_ENEMY, RESULT }
+    private enum Phase { SELECT, THROWING_CAPSULE, SUMMONING, COMMAND, MOVE_SELECT, CAPSULE_SELECT, ETHICS_QUESTION, ETHICS_FEEDBACK, ATTUNE_REVEAL, ATTUNE_INPUT, ACTION_NOTICE, ANIMATING, RECALL_PLAYER, RECALL_ENEMY, RESULT }
+    private enum TrainerProfile {
+        MALE("male_01", "Male", "Crimson Trailblazer", "04-male-crimson-trailblazer.jpg", new Color(191, 67, 74)),
+        MALE_DARK("male_02", "Male", "Midnight Rover", "02-male-midnight-rover.png", new Color(87, 91, 119)),
+        MALE_AZURE("male_03", "Male", "Azure Vanguard", "03-male-azure-vanguard.png", new Color(73, 115, 189)),
+        MALE_SILVER("male_04", "Male", "Silver Scholar", "01-male-silver-scholar.png", new Color(118, 128, 153)),
+        FEMALE("female_01", "Female", "Azure Scout", "07-female-azure-scout.png", new Color(73, 130, 201)),
+        FEMALE_INDIGO("female_02", "Female", "Indigo Duelist", "05-female-indigo-duelist.png", new Color(92, 89, 176)),
+        FEMALE_STARLIGHT("female_03", "Female", "Starlight Scout", "06-female-starlight-scout.png", new Color(135, 134, 165)),
+        FEMALE_VIOLET("female_04", "Female", "Violet Ranger", "08-female-violet-ranger.jpg", new Color(132, 89, 194)),
+        FEMALE_ROSE("female_05", "Female", "Rose Challenger", "09-female-rose-challenger.jpg", new Color(206, 94, 134));
+
+        final String id;
+        final String label;
+        final String title;
+        final Color accent;
+        final BufferedImage art;
+
+        TrainerProfile(String id, String label, String title, String artFile, Color accent) {
+            this.id = id;
+            this.label = label;
+            this.title = title;
+            this.accent = accent;
+            this.art = loadTrainerArt(artFile);
+        }
+
+        static TrainerProfile fromId(String id) {
+            for (TrainerProfile profile : values()) if (profile.id.equalsIgnoreCase(id)) return profile;
+            if ("female".equalsIgnoreCase(id)) return FEMALE;
+            return MALE;
+        }
+    }
+
     private enum EchoSymbol {
         WAVE("WAVE", new Color(48, 138, 190)),
         SPARK("SPARK", new Color(221, 153, 41)),
@@ -61,6 +105,45 @@ public final class BattleDemo {
         EchoSymbol(String label, Color color) {
             this.label = label;
             this.color = color;
+        }
+    }
+
+    private enum CapsuleType {
+        FIELD("Field", new Color(222, 114, 67), "Standard odds", 0.00, 0.00),
+        GROVE("Grove", new Color(76, 166, 88), "Grass / Bug", 0.02, 0.12, "Grass", "Bug"),
+        TIDE("Tide", new Color(50, 148, 205), "Water / Ice", 0.04, 0.12, "Water", "Ice"),
+        EMBER("Ember", new Color(224, 93, 55), "Fire / Dragon", 0.06, 0.12, "Fire", "Dragon"),
+        GLOAM("Gloam", new Color(131, 91, 176), "Dark / Ghost / Poison", 0.08, 0.12, "Dark", "Ghost", "Poison"),
+        STONE("Stone", new Color(137, 132, 111), "Rock / Ground / Steel", 0.10, 0.12, "Rock", "Ground", "Steel"),
+        SKY("Sky", new Color(80, 179, 184), "Flying / Fairy / Psychic", 0.12, 0.12, "Flying", "Fairy", "Psychic"),
+        PRISM("Prism", new Color(200, 165, 73), "Any type", 0.28, 0.00);
+
+        final String label;
+        final Color color;
+        final String affinityText;
+        final double universalBonus;
+        final double matchingBonus;
+        final Set<String> affinities;
+
+        CapsuleType(String label, Color color, String affinityText, double universalBonus, double matchingBonus, String... affinities) {
+            this.label = label;
+            this.color = color;
+            this.affinityText = affinityText;
+            this.universalBonus = universalBonus;
+            this.matchingBonus = matchingBonus;
+            this.affinities = Set.of(affinities);
+        }
+
+        double bonusAgainst(Beast beast) {
+            if (beast == null) return universalBonus;
+            boolean match = affinities.contains(beast.firstType)
+                || (beast.secondType != null && affinities.contains(beast.secondType));
+            return universalBonus + (match ? matchingBonus : 0.0);
+        }
+
+        boolean matches(Beast beast) {
+            return beast != null && (affinities.contains(beast.firstType)
+                || (beast.secondType != null && affinities.contains(beast.secondType)));
         }
     }
 
@@ -81,21 +164,112 @@ public final class BattleDemo {
         }
     }
 
+    private static final class EthicsQuestion {
+        final String topic;
+        final String scenario;
+        final String[] answers;
+        final int correctIndex;
+        final String explanation;
+
+        EthicsQuestion(String topic, String scenario, String a, String b, String c, int correctIndex, String explanation) {
+            this.topic = topic;
+            this.scenario = scenario;
+            this.answers = new String[] {a, b, c};
+            this.correctIndex = correctIndex;
+            this.explanation = explanation;
+        }
+    }
+
+    private static final List<EthicsQuestion> ETHICS_QUESTIONS = List.of(
+        new EthicsQuestion("Respect & inclusion", "A classmate is being left out of a group activity. What is the most ethical response?",
+            "Invite them and listen respectfully", "Ignore the situation", "Make fun of them", 0,
+            "Respect, inclusion, and empathy help everyone participate."),
+        new EthicsQuestion("Honesty", "You notice a mistake in your group's report that makes your result look better. What should you do?",
+            "Hide it before submission", "Correct it and tell the group", "Blame another member", 1,
+            "Honesty means correcting the record even when it is inconvenient."),
+        new EthicsQuestion("Privacy", "A friend shares a private concern with you. What is the best response?",
+            "Post it anonymously online", "Tell the whole class", "Keep it private and ask what support they want", 2,
+            "Respecting privacy protects trust; share only when safety requires help."),
+        new EthicsQuestion("Fairness", "A teammate did not get a chance to speak during planning. What should the group do?",
+            "Make room for their ideas", "Choose without asking them", "Dismiss their ideas as unimportant", 0,
+            "Fairness gives each person a real chance to contribute."),
+        new EthicsQuestion("Responsibility", "You borrowed a classmate's notes and accidentally damaged them. What should you do?",
+            "Return them and say nothing", "Tell them and offer to replace or repair them", "Claim they were already damaged", 1,
+            "Taking responsibility means being truthful and helping repair harm."),
+        new EthicsQuestion("Academic integrity", "A classmate asks you to send your completed individual assignment. What is the fairest response?",
+            "Send your file so they can copy it", "Change your name and submit theirs", "Explain the ideas and help them learn without sharing your work", 2,
+            "Helping someone learn is supportive; copying misrepresents authorship."),
+        new EthicsQuestion("Empathy", "A student makes a mistake while presenting and looks embarrassed. What should you do?",
+            "Give them time and respond kindly", "Laugh so others notice", "Interrupt and take over", 0,
+            "Empathy recognizes how another person feels and avoids adding harm."),
+        new EthicsQuestion("Digital citizenship", "You receive an unverified accusation about a classmate in a group chat. What should you do?",
+            "Forward it to other groups", "Do not spread it; check facts and use a trusted channel", "Add a rumor of your own", 1,
+            "Responsible communication checks information before sharing it."),
+        new EthicsQuestion("Consent", "Your group wants to use a classmate's photo in a presentation. What should happen first?",
+            "Use it because it is already online", "Edit it into a joke", "Ask for their permission", 2,
+            "Consent gives people a choice about how their image is used."),
+        new EthicsQuestion("Accountability", "Your group missed a deadline because you forgot your assigned task. What is the ethical next step?",
+            "Pretend the task was finished", "Own the mistake and agree on a recovery plan", "Blame the group leader", 1,
+            "Accountability combines honesty with a practical effort to make things right."),
+        new EthicsQuestion("Respectful disagreement", "You disagree with a classmate's opinion during discussion. What is the best response?",
+            "Explain your reasons and hear theirs", "Attack their character", "Stop them from speaking", 0,
+            "Respectful disagreement focuses on ideas and keeps dialogue open."),
+        new EthicsQuestion("Compassion", "You see a student struggling to carry project materials. What is the most considerate response?",
+            "Take the materials without asking", "Walk by while mocking them", "Offer help and accept their answer", 2,
+            "Compassion offers help while still respecting another person's choice.")
+    );
+
+    private static final String[] LESSONS = {
+        "Patience: slow down and understand the whole situation before acting.",
+        "Respect: listen to others and make space for different voices.",
+        "Care: prevent harm and protect people who may be vulnerable.",
+        "Courage: speak honestly when something unfair needs to change.",
+        "Integrity: choose the truthful action even when nobody is watching.",
+        "Balance: consider how your choices affect the wider community.",
+        "Responsibility: own your choices and help repair their effects.",
+        "Humility: value other people's knowledge and contributions.",
+        "Kindness: make room for others without expecting a reward.",
+        "Cooperation: share effort and credit fairly.",
+        "Empathy: try to understand how the situation feels to someone else.",
+        "Wisdom: pause and think through likely outcomes.",
+        "Fairness: use the same reasonable standards for everyone.",
+        "Trust: keep promises and handle shared information carefully.",
+        "Community: work together so everyone can belong.",
+        "Hope: encourage people to keep learning after a setback.",
+        "Adaptability: respond thoughtfully when circumstances change.",
+        "Self-control: manage frustration before it becomes harm.",
+        "Service: use your strengths to support the people around you.",
+        "Stewardship: take care of shared spaces and resources.",
+        "Accountability: acknowledge mistakes and follow through on repair.",
+        "Compassion: offer help while respecting a person's choices.",
+        "Discernment: check evidence before repeating a claim.",
+        "Dignity: treat each person as worthy of care and consideration.",
+        "Listening: seek to understand before deciding what to say.",
+        "Privacy: share personal information only with permission or for safety.",
+        "Perseverance: keep working steadily toward a fair solution.",
+        "Honesty: communicate clearly and do not misrepresent your work."
+    };
+
     private static final class Beast {
         final String name;
-        final String file;
+        final BufferedImage sprite;
+        final boolean facesRightInSource;
         final String firstType;
         final String secondType;
         final EchoSymbol[] echoPattern;
         final List<Move> moves = new ArrayList<>();
-        BufferedImage sprite;
         int hp = 100;
+        int maxHp = 100;
+        int level = 1;
         int buffTurns;
         int weakenedTurns;
 
         Beast(String name, String file, String firstType, String secondType, String[] moveNames) {
             this.name = name;
-            this.file = file;
+            this.sprite = BeastIllustrations.load(file);
+            this.facesRightInSource = !file.equals("02-reefclad.png")
+                && !file.equals("05-citrinax.png")
+                && !file.equals("06-moonwhisk.png");
             this.firstType = firstType;
             this.secondType = secondType;
             int patternCode = (nextEchoPatternIndex++ * 37 + 19) % 125;
@@ -113,7 +287,11 @@ public final class BattleDemo {
             moves.add(new Move(moveNames[4], secondary, Kind.DEBUFF, "Lower the enemy's guard for 3 turns."));
         }
 
-        @Override public String toString() { return name + "  ·  " + types(); }
+        @Override public String toString() {
+            int index = indexOf(this);
+            String state = SAVE != null && index < SAVE.caught.length && SAVE.caught[index] ? "  ·  CAUGHT" : "  ·  WILD";
+            return name + "  ·  " + types() + state;
+        }
         String types() { return secondType == null ? firstType : firstType + " / " + secondType; }
         boolean matchesEcho(List<EchoSymbol> entered) {
             if (entered.size() != echoPattern.length) return false;
@@ -125,41 +303,131 @@ public final class BattleDemo {
     }
 
     private static final Beast[] ROSTER = createRoster();
+    private static final SaveData SAVE = new SaveData();
 
+    private static BufferedImage loadTrainerArt(String fileName) {
+        Path asset = Path.of("assets", "trainers", fileName).normalize();
+        try {
+            BufferedImage image = null;
+            if (Files.isRegularFile(asset)) image = javax.imageio.ImageIO.read(asset.toFile());
+            if (image == null) {
+                try (var resource = BattleDemo.class.getResourceAsStream("/assets/trainers/" + fileName)) {
+                    if (resource != null) image = javax.imageio.ImageIO.read(resource);
+                }
+            }
+            return image == null ? null : clearConnectedTrainerBackdrop(image);
+        } catch (IOException | RuntimeException ignored) {
+            return null;
+        }
+    }
+
+
+    /** Removes a flat light background connected to the edges while keeping enclosed clothing highlights. */
+    private static BufferedImage clearConnectedTrainerBackdrop(BufferedImage source) {
+        int width = source.getWidth();
+        int height = source.getHeight();
+        int length = width * height;
+        int[] pixels = source.getRGB(0, 0, width, height, null, 0, width);
+        int[] corners = {pixels[0], pixels[width - 1], pixels[(height - 1) * width], pixels[length - 1]};
+        int backgroundRed = 0, backgroundGreen = 0, backgroundBlue = 0;
+        for (int pixel : corners) {
+            backgroundRed += (pixel >>> 16) & 0xff;
+            backgroundGreen += (pixel >>> 8) & 0xff;
+            backgroundBlue += pixel & 0xff;
+        }
+        backgroundRed /= corners.length;
+        backgroundGreen /= corners.length;
+        backgroundBlue /= corners.length;
+
+        boolean[] background = new boolean[length];
+        int[] queue = new int[length];
+        int tail = 0;
+        for (int x = 0; x < width; x++) {
+            tail = enqueueTrainerBackdrop(pixels, background, queue, tail, x, backgroundRed, backgroundGreen, backgroundBlue);
+            tail = enqueueTrainerBackdrop(pixels, background, queue, tail, (height - 1) * width + x, backgroundRed, backgroundGreen, backgroundBlue);
+        }
+        for (int y = 1; y < height - 1; y++) {
+            tail = enqueueTrainerBackdrop(pixels, background, queue, tail, y * width, backgroundRed, backgroundGreen, backgroundBlue);
+            tail = enqueueTrainerBackdrop(pixels, background, queue, tail, y * width + width - 1, backgroundRed, backgroundGreen, backgroundBlue);
+        }
+
+        int head = 0;
+        while (head < tail) {
+            int index = queue[head++];
+            int x = index % width;
+            if (x > 0) tail = enqueueTrainerBackdrop(pixels, background, queue, tail, index - 1, backgroundRed, backgroundGreen, backgroundBlue);
+            if (x + 1 < width) tail = enqueueTrainerBackdrop(pixels, background, queue, tail, index + 1, backgroundRed, backgroundGreen, backgroundBlue);
+            if (index >= width) tail = enqueueTrainerBackdrop(pixels, background, queue, tail, index - width, backgroundRed, backgroundGreen, backgroundBlue);
+            if (index + width < length) tail = enqueueTrainerBackdrop(pixels, background, queue, tail, index + width, backgroundRed, backgroundGreen, backgroundBlue);
+        }
+
+        boolean changed = false;
+        for (int i = 0; i < length; i++) {
+            if (background[i]) {
+                pixels[i] = 0x00000000;
+                changed = true;
+            }
+        }
+        if (!changed) return source;
+        BufferedImage cutout = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+        cutout.setRGB(0, 0, width, height, pixels, 0, width);
+        return cutout;
+    }
+
+    private static int enqueueTrainerBackdrop(int[] pixels, boolean[] background, int[] queue, int tail,
+            int index, int red, int green, int blue) {
+        if (background[index]) return tail;
+        int pixel = pixels[index];
+        int alpha = (pixel >>> 24) & 0xff;
+        int pixelRed = (pixel >>> 16) & 0xff;
+        int pixelGreen = (pixel >>> 8) & 0xff;
+        int pixelBlue = pixel & 0xff;
+        if (alpha <= 8 || (Math.abs(pixelRed - red) <= 40
+                && Math.abs(pixelGreen - green) <= 40 && Math.abs(pixelBlue - blue) <= 40)) {
+            background[index] = true;
+            queue[tail++] = index;
+        }
+        return tail;
+    }
     private static Beast[] createRoster() {
         return new Beast[] {
-            new Beast("Pebblit", "01-pebblit.png", "Rock", "Ground", new String[] {"Pebble Shot", "Faultline Crash", "Shard Volley", "Granite Guard", "Sinkhole Snare"}),
-            new Beast("Glowfin", "02-glowfin.png", "Water", null, new String[] {"Rill Dart", "Bubble Lance", "Tidal Burst", "Current Veil", "Drenching Drag"}),
-            new Beast("Bramblet", "03-bramblet.png", "Grass", "Poison", new String[] {"Briar Snap", "Venom Seed", "Rootlash", "Canopy Guard", "Sporebind"}),
-            new Beast("Emberkit", "04-emberkit.png", "Fire", null, new String[] {"Ember Pounce", "Cinder Rush", "Flame Arc", "Soot Shield", "Scorch Mark"}),
-            new Beast("Chimelet", "05-chimelet.png", "Flying", "Psychic", new String[] {"Gale Note", "Mind Chime", "Echo Dive", "Focus Tone", "Dissonance Hex"}),
-            new Beast("Mosskip", "06-mosskip.png", "Grass", "Water", new String[] {"Reed Whip", "Spring Jet", "Lily Pad Slam", "Moss Mantle", "Bog Snare"}),
-            new Beast("Copperclack", "07-copperclack.png", "Bug", "Steel", new String[] {"Pinch Clamp", "Rivet Rush", "Gearspin", "Iron Carapace", "Resin Lock"}),
-            new Beast("Mistmoth", "08-mistmoth.png", "Bug", "Fairy", new String[] {"Dustwing Dart", "Moonlit Dust", "Flutter Flurry", "Gossamer Glow", "Pollen Hush"}),
-            new Beast("Liltail", "09-liltail.png", "Normal", "Fairy", new String[] {"Tumble Tap", "Charm Chirp", "Ribbon Rush", "Lucky Step", "Dazzle Bind"}),
-            new Beast("Flickeray", "10-flickeray.png", "Water", "Flying", new String[] {"Current Slice", "Jetstream Dive", "Foam Burst", "Tailwind Lift", "Undertow Trap"}),
-            new Beast("Moonhare", "11-moonhare.png", "Ice", "Fairy", new String[] {"Frost Hop", "Moonbeam Kick", "Snowflake Volley", "Winter Veil", "Chillbind"}),
-            new Beast("Dusklynx", "12-dusklynx.png", "Dark", "Psychic", new String[] {"Shade Pounce", "Mind Rake", "Night Pulse", "Umbral Focus", "Gloom Snare"}),
-            new Beast("Thundertuft", "13-thundertuft.png", "Electric", "Rock", new String[] {"Volt Pebble", "Thunderclap", "Static Shard", "Storm Charge", "Grounded Trap"}),
-            new Beast("Glasswing", "14-glasswing.png", "Flying", "Steel", new String[] {"Razor Gale", "Wingsteel Dive", "Prism Feather", "Alloy Guard", "Wind Lock"}),
-            new Beast("Songroot", "15-songroot.png", "Grass", "Ghost", new String[] {"Root Rattle", "Wisp Seed", "Hollow Vine", "Elder Bark", "Haunt Bind"}),
-            new Beast("Solflare Stag", "16-solflare-stag.png", "Fire", "Fairy", new String[] {"Solar Flare", "Radiant Antler", "Sunburst Charge", "Dawn Mantle", "Gleam Snare"}),
-            new Beast("Tidewisp Serpent", "17-tidewisp-serpent.png", "Water", "Dragon", new String[] {"Tide Lance", "Wyrm Current", "Deepcoil Surge", "Scale Ward", "Maelstrom Bind"}),
-            new Beast("Ironhowl", "18-ironhowl.png", "Steel", "Fighting", new String[] {"Iron Jaw", "Anvil Charge", "Howling Uppercut", "Warplate", "Pressure Roar"}),
-            new Beast("Skyforge Roc", "19-skyforge-roc.png", "Fire", "Flying", new String[] {"Forgefire Dive", "Ember Wing", "Meteor Talon", "Updraft Crown", "Ashen Snare"}),
-            new Beast("Bloomguard", "20-bloomguard.png", "Grass", "Rock", new String[] {"Petal Slam", "Stonebloom Burst", "Rootstone Crash", "Verdant Bulwark", "Briar Quarry"}),
-            new Beast("Aurion", "21-aurion.png", "Fire", "Psychic", new String[] {"Solar Lance", "Mindflare", "Sun Dial Burst", "Crown of Focus", "Afterglow Seal"}),
-            new Beast("Vesperwing", "22-vesperwing.png", "Ghost", "Flying", new String[] {"Phantom Talon", "Wraith Gust", "Nightfall Dive", "Veil of Feathers", "Specter Snare"}),
-            new Beast("Tempest Crown", "23-tempest-crown.png", "Electric", "Flying", new String[] {"Crownbolt", "Stormwing Dive", "Tempest Arc", "Charged Aegis", "Cloud Lock"}),
-            new Beast("Lumenwhale", "24-lumenwhale.png", "Water", "Psychic", new String[] {"Lightcurrent", "Mindtide Pulse", "Abyssal Beam", "Lumen Shield", "Trenchbind"}),
-            new Beast("Umbralynx", "25-umbralynx.png", "Dark", "Ghost", new String[] {"Gloomfang", "Shade Rift", "Phantom Pounce", "Dark Mantle", "Dread Snare"}),
-            new Beast("Chronobloom", "26-chronobloom.png", "Bug", "Grass", new String[] {"Timepetal Dart", "Thorn Clock", "Bloom Burst", "Spore Tempo", "Stilltime Bind"}),
-            new Beast("Echoryn", "27-echoryn.png", "Dragon", "Steel", new String[] {"Echo Fang", "Aegis Tail", "Chronosteel Crash", "Dragon Plate", "Soundless Lock"})
+            new Beast("Emberwren", "01-emberwren.png", "Fire", "Dragon", new String[] {"Cinder Peck", "Flare Wing", "Kindle Burst", "Hearthguard", "Ashen Feint"}),
+            new Beast("Reefclad", "02-reefclad.png", "Water", "Rock", new String[] {"Reef Jab", "Tide Roll", "Coral Breaker", "Shell Shelter", "Undertow Pull"}),
+            new Beast("Thornstride", "03-thornstride.png", "Grass", null, new String[] {"Briar Dash", "Leaf Talon", "Wildwood Rush", "Barkskin", "Root Snare"}),
+            new Beast("Stormhorn", "04-stormhorn.png", "Electric", "Flying", new String[] {"Volt Talon", "Thunder Gale", "Skyflash", "Static Mantle", "Storm Pressure"}),
+            new Beast("Citrinax", "05-citrinax.png", "Rock", "Ground", new String[] {"Amber Bash", "Quartz Claw", "Gemstone Quake", "Citrine Shell", "Faultline Grip"}),
+            new Beast("Moonwhisk", "06-moonwhisk.png", "Psychic", "Fairy", new String[] {"Lunar Pounce", "Dream Pulse", "Moonlit Rush", "Calm Focus", "Hush Charm"}),
+            new Beast("Fungalump", "07-fungalump.jpg", "Grass", "Poison", new String[] {"Mushroom Bonk", "Spore Puff", "Mycelium Burst", "Mossy Padding", "Sleepy Spores"}),
+            new Beast("Skydrake", "08-skydrake.jpg", "Dragon", "Flying", new String[] {"Cloudcoil", "Wingbeat", "Cyclone Dive", "Updraft Guard", "Gale Bind"}),
+            new Beast("Lantern Beetle", "09-lantern-beetle.jpg", "Bug", "Electric", new String[] {"Lantern Lunge", "Glowcharge", "Beacon Burst", "Carapace Glow", "Dimming Dust"}),
+            new Beast("Pebblekin", "10-pebblekin.jpg", "Rock", null, new String[] {"Pebble Pop", "Boulder Roll", "Stoneheart Slam", "Granite Guard", "Dust Snare"}),
+            new Beast("Inkwhorl", "11-inkwhorl.jpg", "Water", "Dark", new String[] {"Ink Flick", "Abyssal Curl", "Midnight Current", "Deepwater Veil", "Inkbind"}),
+            new Beast("Frostowl", "12-frostowl.jpg", "Ice", "Flying", new String[] {"Snowfeather", "Glacier Wing", "Whiteout Dive", "Frost Plume", "Cold Front"}),
+            new Beast("Thornhop", "13-thornhop.jpg", "Grass", "Fighting", new String[] {"Bramble Kick", "Vine Vault", "Thicket Crash", "Leafy Stance", "Briar Bind"}),
+            new Beast("Coralclaw", "14-coralclaw.jpg", "Water", "Bug", new String[] {"Coral Pinch", "Reef Scuttle", "Tidal Claw", "Shell Brace", "Brine Trap"}),
+            new Beast("Moonglint", "15-moonglint.jpg", "Fairy", "Psychic", new String[] {"Glimmer Step", "Moonbeam", "Astral Bloom", "Starlit Poise", "Dreamcatcher"}),
+            new Beast("Kelpcoil", "16-kelpcoil.jpg", "Water", "Grass", new String[] {"Kelp Lash", "Current Twist", "Tidal Coil", "Seaweed Wrap", "Silt Snare"}),
+            new Beast("Dunecrest", "17-dunecrest.jpg", "Ground", "Normal", new String[] {"Dune Pounce", "Sand Flick", "Mirage Rush", "Sandskin", "Quicksand Grip"}),
+            new Beast("Cogfrog", "18-cogfrog.jpg", "Electric", "Steel", new String[] {"Gear Hop", "Spark Spring", "Clockwork Crash", "Copper Plating", "Magnet Lock"}),
+            new Beast("Petalhart", "19-petalhart.jpg", "Grass", "Fairy", new String[] {"Petal Prance", "Bloom Beam", "Spring Antlers", "Clover Crown", "Pollen Drowse"}),
+            new Beast("Basaltbat", "20-basaltbat.jpg", "Rock", "Flying", new String[] {"Basalt Wing", "Cave Gust", "Obsidian Dive", "Stoneflight Guard", "Echo Bind"}),
+            new Beast("Geode Snail", "21-geode-snail.jpg", "Rock", "Psychic", new String[] {"Crystal Nudge", "Gem Flicker", "Geode Pulse", "Quartz Shell", "Prism Snare"}),
+            new Beast("Thunderstoat", "22-thunderstoat.jpg", "Electric", "Normal", new String[] {"Static Pounce", "Volt Dash", "Thunder Snap", "Charged Fur", "Nerve Jolt"}),
+            new Beast("Marshkite", "23-marshkite.jpg", "Flying", "Grass", new String[] {"Reed Wing", "Bog Breeze", "Marsh Dive", "Fen Veil", "Sedge Snare"}),
+            new Beast("Starpuff", "24-starpuff.jpg", "Fairy", "Psychic", new String[] {"Star Hop", "Comet Pop", "Stardust Burst", "Nebula Nap", "Orbit Tangle"}),
+            new Beast("Vineknuckle", "25-vineknuckle.jpg", "Grass", "Fighting", new String[] {"Vine Fist", "Bramble Punch", "Canopy Smash", "Rooted Stance", "Tangle Grip"}),
+            new Beast("Honeyhide", "26-honeyhide.jpg", "Bug", "Steel", new String[] {"Honey Headbutt", "Shell Sting", "Amber Charge", "Waxen Armor", "Sticky Snare"}),
+            new Beast("Crockmimic", "27-crockmimic.jpg", "Water", "Rock", new String[] {"Bog Bite", "Shell Snap", "Marsh Chomp", "Mudplate Guard", "Mire Grip"}),
+            new Beast("Aurorawhale", "28-aurorawhale.jpg", "Water", "Ice", new String[] {"Aurora Splash", "Glacier Song", "Polar Current", "Northern Veil", "Cold Eddy"}),
         };
     }
 
-    private final JFrame frame = new JFrame("Echoes of Luma — Beast Arena");
+    private final JFrame frame = new JFrame("Echoes of Luma — Catch. Learn. Grow.");
     private final Arena arena = new Arena();
+    private final JPanel screenCards = new JPanel(new java.awt.CardLayout());
+    private final JPanel gameRoot = new JPanel(new BorderLayout(0, 0));
+    private final MainMenu mainMenu = new MainMenu();
+    private final TrainerSelectionPanel trainerSelection = new TrainerSelectionPanel();
     private final JPanel cards = new JPanel(new java.awt.CardLayout());
     private final JPanel selectCard = new JPanel();
     private final JPanel commandCard = new JPanel();
@@ -168,7 +436,7 @@ public final class BattleDemo {
     private final JComboBox<Beast> enemyChoice = new JComboBox<>(ROSTER);
     private final JComboBox<String> modeChoice = new JComboBox<>(new String[] {"Wild encounter · no trainer", "Trainer battle"});
     private final JLabel hint = new JLabel("Choose a capsule, then open it to release your beast.");
-    private final JLabel selectPreview = new JLabel("CAPSULE 01  ·  PEBBLIT", SwingConstants.CENTER);
+    private final JLabel selectPreview = new JLabel("CAPSULE 01  ·  EMBERWREN", SwingConstants.CENTER);
     private final JButton[] moveButtons = new JButton[5];
     private final JButton captureButton = button("Capture", new Color(145, 75, 176));
     private JButton fightButton;
@@ -176,18 +444,18 @@ public final class BattleDemo {
     private JButton attuneButton;
     private JButton listenButton;
     private JButton runButton;
+    private TrainerProfile activeTrainer = TrainerProfile.MALE;
 
     private BattleDemo() {
-        loadSprites();
+        SAVE.load();
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        frame.setMinimumSize(new Dimension(860, 760));
-        frame.setSize(1040, 820);
+        frame.setMinimumSize(new Dimension(900, 650));
+        frame.setSize(1120, 760);
         frame.setLocationRelativeTo(null);
 
-        JPanel root = new JPanel(new BorderLayout(0, 0));
-        root.setBackground(PANEL);
-        root.add(arena, BorderLayout.CENTER);
-        root.add(cards, BorderLayout.SOUTH);
+        gameRoot.setBackground(PANEL);
+        gameRoot.add(arena, BorderLayout.CENTER);
+        gameRoot.add(cards, BorderLayout.SOUTH);
         buildSelectionCard();
         buildCommandCard();
         buildMoveCard();
@@ -197,27 +465,546 @@ public final class BattleDemo {
         cards.add(moveCard, "moves");
         showCard("select");
 
-        playerChoice.addActionListener(e -> updateSelectedPreview());
+        screenCards.add(mainMenu, "title");
+        screenCards.add(trainerSelection, "trainer");
+        screenCards.add(gameRoot, "game");
+        mainMenu.newGame.addActionListener(e -> startNewGame());
+        mainMenu.continueGame.addActionListener(e -> continueGame());
+        mainMenu.learnButton.addActionListener(e -> showLearningJournal());
+        mainMenu.settings.addActionListener(e -> showSettings());
+        mainMenu.quit.addActionListener(e -> frame.dispose());
+        trainerSelection.backButton.addActionListener(e -> showScreen("title"));
+
+        playerChoice.addActionListener(e -> { updateSelectedPreview(); updateSelectionHint(); });
         enemyChoice.addActionListener(e -> arena.repaint());
         modeChoice.addActionListener(e -> updateCaptureRule());
         arena.startClock();
-        frame.setContentPane(root);
+        frame.setContentPane(screenCards);
+        showScreen("title");
         frame.setVisible(true);
     }
 
-    private static void loadSprites() {
-        for (Beast beast : ROSTER) {
-            try {
-                File file = new File("assets/beasts", beast.file);
-                if (file.isFile()) beast.sprite = ImageIO.read(file);
-                if (beast.sprite == null) {
-                    var resource = BattleDemo.class.getResourceAsStream("/assets/beasts/" + beast.file);
-                    if (resource != null) beast.sprite = ImageIO.read(resource);
-                }
-            } catch (Exception ignored) {
-                beast.sprite = null;
+    private void showScreen(String name) {
+        ((java.awt.CardLayout) screenCards.getLayout()).show(screenCards, name);
+        mainMenu.refreshButtons();
+        frame.revalidate();
+        frame.repaint();
+    }
+
+    private void startNewGame() {
+        SAVE.reset();
+        playerChoice.setSelectedIndex(0);
+        updateSelectedPreview();
+        showScreen("trainer");
+    }
+
+    private void beginWithTrainer(TrainerProfile profile) {
+        activeTrainer = profile;
+        SAVE.selectTrainer(profile.id);
+        startStarterSelection();
+    }
+
+    private void startStarterSelection() {
+        arena.phase = Phase.SELECT;
+        cards.setVisible(true);
+        hint.setText("Choose your first beast. Ethics challenges happen before every move; rewards come after a win or catch.");
+        updateSelectedPreview();
+        showCard("select");
+        showScreen("game");
+    }
+
+    private void continueGame() {
+        activeTrainer = TrainerProfile.fromId(SAVE.trainerStyle);
+        int choice = Math.max(0, Math.min(ROSTER.length - 1, SAVE.lastBeast));
+        playerChoice.setSelectedIndex(choice);
+        arena.phase = Phase.SELECT;
+        cards.setVisible(true);
+        hint.setText("Welcome back. Your levels and unlocked lessons are saved.");
+        updateSelectedPreview();
+        showCard("select");
+        showScreen("game");
+    }
+
+    private void showSettings() {
+        JOptionPane.showMessageDialog(frame,
+        "CONTROLS\n\nClick a menu choice or use the mouse.\nPress 1, 2, or 3 to answer an ethics question.\nPress 1-8 to choose a capsule; Escape returns to battle.\nPress Enter, Space, or Z to continue dialogue.\n\nEvery beast has five type-based moves. XP is awarded after a win or catch, never for quiz answers.",
+            "Echoes of Luma — Settings & Controls", JOptionPane.INFORMATION_MESSAGE);
+    }
+
+    private void showLearningJournal() {
+        StringBuilder text = new StringBuilder("LEARNINGS UNLOCKED\n\n");
+        int count = 0;
+        for (int i = 0; i < ROSTER.length; i++) {
+            if (SAVE.lessonUnlocked[i]) {
+                text.append(ROSTER[i].name).append(" — ").append(LESSONS[i]).append("\n\n");
+                count++;
             }
         }
+        if (count == 0) text.append("Catch a wild beast to unlock its learning card.");
+        JTextArea journal = new JTextArea(text.toString(), 16, 58);
+        journal.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 14));
+        journal.setEditable(false);
+        journal.setLineWrap(true);
+        journal.setWrapStyleWord(true);
+        JScrollPane scroll = new JScrollPane(journal);
+        scroll.setPreferredSize(new Dimension(620, 390));
+        JOptionPane.showMessageDialog(frame, scroll, "Learning Journal", JOptionPane.INFORMATION_MESSAGE);
+    }
+
+    private static final class SaveData {
+        private final Path file = Path.of(System.getProperty("user.home"), ".echoes-of-luma-save-28-beasts.properties");
+        final boolean[] caught = new boolean[ROSTER.length];
+        final boolean[] lessonUnlocked = new boolean[ROSTER.length];
+        final int[] experience = new int[ROSTER.length];
+        int lastBeast;
+        boolean hasSave;
+        String trainerStyle = "male";
+
+        void load() {
+            if (!Files.isRegularFile(file)) return;
+            Properties data = new Properties();
+            try (var input = Files.newInputStream(file)) {
+                data.load(input);
+                hasSave = Boolean.parseBoolean(data.getProperty("started", "true"));
+                lastBeast = parseInt(data.getProperty("lastBeast"), 0);
+                trainerStyle = data.getProperty("trainerStyle", "male");
+                for (int i = 0; i < ROSTER.length; i++) {
+                    caught[i] = Boolean.parseBoolean(data.getProperty("beast." + i + ".caught", "false"));
+                    lessonUnlocked[i] = Boolean.parseBoolean(data.getProperty("beast." + i + ".lesson", "false"));
+                    experience[i] = Math.max(0, parseInt(data.getProperty("beast." + i + ".xp"), 0));
+                }
+            } catch (IOException ignored) {
+                hasSave = false;
+            }
+        }
+
+        void reset() {
+            for (int i = 0; i < ROSTER.length; i++) {
+                caught[i] = false;
+                lessonUnlocked[i] = false;
+                experience[i] = 0;
+            }
+            lastBeast = 0;
+            hasSave = false;
+            trainerStyle = "male";
+            save();
+        }
+
+        void selectTrainer(String id) {
+            trainerStyle = TrainerProfile.fromId(id).id;
+            save();
+        }
+
+        int level(Beast beast) { return 1 + experience[indexOf(beast)] / 100; }
+        int nextLevelXp(Beast beast) { return experience[indexOf(beast)] % 100; }
+        void addExperience(Beast beast, int amount) {
+            int i = indexOf(beast);
+            experience[i] += Math.max(0, amount);
+            lastBeast = i;
+            hasSave = true;
+            save();
+        }
+        void catchBeast(Beast beast) {
+            int i = indexOf(beast);
+            caught[i] = true;
+            lessonUnlocked[i] = true;
+            lastBeast = i;
+            hasSave = true;
+            save();
+        }
+        void chooseStarter(Beast beast) {
+            int i = indexOf(beast);
+            caught[i] = true;
+            lessonUnlocked[i] = true;
+            lastBeast = i;
+            hasSave = true;
+            save();
+        }
+        boolean hasAnyCaught() {
+            for (boolean isCaught : caught) if (isCaught) return true;
+            return false;
+        }
+        private void save() {
+            Properties data = new Properties();
+            data.setProperty("started", Boolean.toString(hasSave));
+            data.setProperty("lastBeast", Integer.toString(lastBeast));
+            data.setProperty("trainerStyle", trainerStyle);
+            for (int i = 0; i < ROSTER.length; i++) {
+                data.setProperty("beast." + i + ".caught", Boolean.toString(caught[i]));
+                data.setProperty("beast." + i + ".lesson", Boolean.toString(lessonUnlocked[i]));
+                data.setProperty("beast." + i + ".xp", Integer.toString(experience[i]));
+            }
+            try (var output = Files.newOutputStream(file)) {
+                data.store(output, "Echoes of Luma progress");
+            } catch (IOException ignored) { }
+        }
+        private static int parseInt(String value, int fallback) {
+            try { return Integer.parseInt(value); }
+            catch (NumberFormatException ignored) { return fallback; }
+        }
+    }
+
+    private final class MainMenu extends JPanel {
+        final JButton newGame = menuButton("✦  New Game");
+        final JButton continueGame = menuButton("▤  Continue");
+        final JButton learnButton = menuButton("◈  Learnings");
+        final JButton settings = menuButton("⚙  Settings");
+        final JButton quit = menuButton("⇥  Quit");
+
+        MainMenu() {
+            setLayout(null);
+            setFocusable(true);
+            add(newGame);
+            add(continueGame);
+            add(learnButton);
+            add(settings);
+            add(quit);
+        }
+
+        void refreshButtons() {
+            continueGame.setEnabled(SAVE.hasSave);
+            learnButton.setEnabled(hasLessons());
+        }
+
+        private boolean hasLessons() {
+            for (boolean unlocked : SAVE.lessonUnlocked) if (unlocked) return true;
+            return false;
+        }
+
+        @Override public void doLayout() {
+            double scale = Math.min(getWidth() / 960.0, getHeight() / 540.0);
+            int ox = (int) ((getWidth() - 960 * scale) / 2);
+            int oy = (int) ((getHeight() - 540 * scale) / 2);
+            int x = ox + (int) (680 * scale);
+            int width = (int) (230 * scale);
+            int height = (int) (48 * scale);
+            int gap = (int) (12 * scale);
+            int y = oy + (int) (250 * scale);
+            JButton[] buttons = {newGame, continueGame, learnButton, settings, quit};
+            for (int i = 0; i < buttons.length; i++) {
+                buttons[i].setBounds(x, y + i * (height + gap), width, height);
+                buttons[i].setFont(new Font(Font.MONOSPACED, Font.BOLD, Math.max(13, (int) (18 * scale))));
+            }
+        }
+
+        @Override protected void paintComponent(Graphics graphics) {
+            super.paintComponent(graphics);
+            Graphics2D g = (Graphics2D) graphics.create();
+            double scale = Math.min(getWidth() / 960.0, getHeight() / 540.0);
+            int drawW = (int) (960 * scale), drawH = (int) (540 * scale);
+            int ox = (getWidth() - drawW) / 2, oy = (getHeight() - drawH) / 2;
+            g.translate(ox, oy);
+            g.scale(scale, scale);
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+            drawTitleWorld(g);
+            drawTitleTrainer(g, 155, 312);
+            Beast titleBeast = ROSTER[Math.max(0, Math.min(ROSTER.length - 1, SAVE.lastBeast))];
+            BeastIllustrations.draw(g, titleBeast.sprite, 262, 381, 112, 112, 1f, false);
+
+            g.setFont(new Font(Font.SERIF, Font.BOLD, 58));
+            g.setColor(new Color(8, 45, 87, 190));
+            g.drawString("ECHOES", 62, 105);
+            g.drawString("OF LUMA", 62, 166);
+            g.setColor(new Color(243, 252, 255));
+            g.drawString("ECHOES", 58, 101);
+            g.drawString("OF LUMA", 58, 162);
+            g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 19));
+            g.setColor(new Color(11, 53, 90));
+            g.drawString("BEAST TRAINER ADVENTURE", 74, 196);
+            g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 17));
+            g.setColor(Color.WHITE);
+            g.drawString("CATCH. LEARN. GROW.", 692, 220);
+            g.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 14));
+            g.drawString("Be a better you.", 744, 243);
+            g.dispose();
+        }
+
+        private void drawTitleWorld(Graphics2D g) {
+            g.setPaint(new GradientPaint(0, 0, new Color(51, 157, 231), 0, 540, new Color(198, 232, 242)));
+            g.fillRect(0, 0, 960, 540);
+            g.setColor(new Color(255, 241, 190, 75)); g.fillOval(570, -120, 430, 330);
+            drawMenuCloud(g, 530, 86, 1.12); drawMenuCloud(g, 798, 139, .82); drawMenuCloud(g, 361, 123, .7);
+
+            Path2D backMountains = new Path2D.Double();
+            backMountains.moveTo(0, 318); backMountains.lineTo(0, 277); backMountains.lineTo(122, 186);
+            backMountains.lineTo(192, 236); backMountains.lineTo(307, 146); backMountains.lineTo(408, 257);
+            backMountains.lineTo(520, 183); backMountains.lineTo(628, 272); backMountains.lineTo(754, 160);
+            backMountains.lineTo(865, 243); backMountains.lineTo(960, 175); backMountains.lineTo(960, 366); backMountains.closePath();
+            g.setPaint(new GradientPaint(0, 146, new Color(157, 207, 224), 0, 360, new Color(113, 172, 195)));
+            g.fill(backMountains);
+            Path2D frontMountains = new Path2D.Double();
+            frontMountains.moveTo(0, 362); frontMountains.lineTo(0, 314); frontMountains.lineTo(112, 257);
+            frontMountains.lineTo(210, 300); frontMountains.lineTo(331, 226); frontMountains.lineTo(448, 322);
+            frontMountains.lineTo(559, 263); frontMountains.lineTo(669, 321); frontMountains.lineTo(789, 232);
+            frontMountains.lineTo(899, 296); frontMountains.lineTo(960, 260); frontMountains.lineTo(960, 389); frontMountains.closePath();
+            g.setPaint(new GradientPaint(0, 220, new Color(89, 156, 187), 0, 389, new Color(59, 125, 165)));
+            g.fill(frontMountains);
+            g.setColor(new Color(231, 247, 246, 185));
+            g.drawLine(122, 186, 192, 236); g.drawLine(307, 146, 408, 257); g.drawLine(754, 160, 865, 243);
+
+            Path2D island = new Path2D.Double();
+            island.moveTo(393, 340); island.curveTo(435, 319, 477, 311, 515, 318);
+            island.curveTo(562, 309, 617, 328, 657, 350); island.lineTo(696, 386);
+            island.lineTo(664, 416); island.lineTo(405, 416); island.lineTo(370, 390); island.closePath();
+            g.setPaint(new GradientPaint(0, 328, new Color(151, 127, 103), 0, 421, new Color(73, 88, 76)));
+            g.fill(island);
+            g.setColor(new Color(45, 111, 124, 150)); g.draw(new QuadCurve2D.Double(371, 397, 515, 420, 687, 392));
+            drawCastleTower(g, 443, 226, 0.68);
+            drawCastleTower(g, 612, 222, 0.74);
+            drawCastleTower(g, 486, 174, 1.0);
+            g.setPaint(new GradientPaint(463, 239, new Color(246, 230, 186), 463, 379, new Color(187, 181, 151)));
+            g.fillRoundRect(454, 237, 191, 143, 10, 10);
+            g.setColor(new Color(255, 244, 211)); g.fillRoundRect(448, 231, 203, 16, 9, 9);
+            g.setColor(new Color(213, 199, 160)); g.fillRoundRect(470, 270, 48, 111, 5, 5); g.fillRoundRect(579, 270, 47, 111, 5, 5);
+            g.setColor(new Color(30, 92, 138)); g.fillRoundRect(529, 280, 43, 101, 18, 18);
+            g.setColor(new Color(176, 232, 241, 190)); g.drawRoundRect(536, 289, 29, 87, 13, 13);
+            g.setColor(new Color(255, 222, 132)); g.setStroke(new BasicStroke(2));
+            g.drawOval(533, 307, 35, 35); g.drawOval(541, 315, 19, 19);
+
+            Path2D farBank = new Path2D.Double();
+            farBank.moveTo(0, 400); farBank.curveTo(168, 374, 295, 407, 405, 441);
+            farBank.curveTo(519, 467, 671, 418, 960, 392); farBank.lineTo(960, 540); farBank.lineTo(0, 540); farBank.closePath();
+            g.setPaint(new GradientPaint(0, 395, new Color(37, 119, 110), 0, 540, new Color(13, 77, 112)));
+            g.fill(farBank);
+            Path2D river = new Path2D.Double();
+            river.moveTo(313, 540); river.curveTo(378, 495, 487, 475, 572, 452);
+            river.curveTo(666, 426, 694, 443, 771, 418); river.curveTo(828, 397, 895, 409, 960, 393);
+            river.lineTo(960, 540); river.closePath();
+            g.setPaint(new GradientPaint(0, 430, new Color(66, 184, 226), 0, 540, new Color(31, 125, 192)));
+            g.fill(river);
+            g.setColor(new Color(185, 239, 243, 155)); g.setStroke(new BasicStroke(3));
+            g.draw(new QuadCurve2D.Double(513, 493, 687, 437, 831, 427));
+            g.draw(new QuadCurve2D.Double(655, 524, 803, 478, 938, 451));
+
+            Path2D meadow = new Path2D.Double();
+            meadow.moveTo(0, 417); meadow.curveTo(154, 395, 272, 424, 385, 455);
+            meadow.curveTo(460, 478, 503, 481, 555, 466); meadow.lineTo(427, 540); meadow.lineTo(0, 540); meadow.closePath();
+            g.setPaint(new GradientPaint(0, 403, new Color(115, 179, 78), 0, 540, new Color(51, 132, 67)));
+            g.fill(meadow);
+            g.setColor(new Color(236, 210, 151));
+            Path2D path = new Path2D.Double(); path.moveTo(173, 540); path.curveTo(245, 492, 337, 469, 400, 457);
+            path.curveTo(475, 440, 521, 439, 579, 455); path.curveTo(530, 460, 490, 475, 448, 502);
+            path.lineTo(360, 540); path.closePath(); g.fill(path);
+
+            for (int i = 0; i < 18; i++) {
+                int x = i < 9 ? i * 42 - 34 : 786 + (i - 9) * 42;
+                int y = 253 + (i % 4) * 19;
+                drawMenuTree(g, x, y, 45 + i % 3 * 8);
+            }
+            Random landscape = new Random(22);
+            for (int i = 0; i < 70; i++) {
+                int x = landscape.nextInt(960), y = 420 + landscape.nextInt(115);
+                g.setColor(i % 4 == 0 ? new Color(251, 238, 184, 190) : new Color(163, 212, 113, 130));
+                g.fillOval(x, y, 4 + i % 3 * 2, 2 + i % 2 * 2);
+            }
+        }
+
+        private void drawMenuCloud(Graphics2D g, int x, int y, double scale) {
+            Graphics2D cloud = (Graphics2D) g.create(); cloud.translate(x, y); cloud.scale(scale, scale);
+            cloud.setColor(new Color(255, 255, 255, 220));
+            cloud.fillOval(0, 16, 124, 34); cloud.fillOval(24, 0, 51, 44); cloud.fillOval(61, 7, 56, 40);
+            cloud.setColor(new Color(255, 255, 255, 98)); cloud.drawArc(23, 8, 66, 38, 0, 175);
+            cloud.dispose();
+        }
+
+        private void drawCastleTower(Graphics2D g, int x, int y, double scale) {
+            Graphics2D tower = (Graphics2D) g.create(); tower.translate(x, y); tower.scale(scale, scale);
+            tower.setColor(new Color(210, 209, 188)); tower.fillRoundRect(0, 24, 38, 113, 5, 5);
+            tower.setColor(new Color(248, 233, 198)); tower.fillRoundRect(5, 29, 28, 107, 4, 4);
+            tower.setColor(new Color(133, 104, 105));
+            tower.fillPolygon(new int[] {-5, 19, 43}, new int[] {31, -17, 31}, 3);
+            tower.setColor(new Color(247, 226, 183)); tower.fillPolygon(new int[] {2, 19, 36}, new int[] {27, -6, 27}, 3);
+            tower.setColor(new Color(50, 112, 154)); tower.fillRoundRect(14, 63, 11, 29, 8, 8);
+            tower.setColor(new Color(255, 250, 217)); tower.drawLine(19, 2, 19, -15); tower.drawLine(19, -15, 27, -8);
+            tower.dispose();
+        }
+
+        private void drawMenuTree(Graphics2D g, int x, int y, int size) {
+            g.setPaint(new GradientPaint(x + size / 2, y + 15, new Color(115, 86, 57), x + size / 2, y + size * 2, new Color(73, 71, 48)));
+            g.fillRoundRect(x + size / 2 - 5, y + 18, 11, size * 2, 6, 6);
+            Color[] greens = {new Color(27, 92, 55), new Color(47, 125, 62), new Color(82, 157, 73)};
+            int[][] blobs = {{0, 16, 36}, {18, 0, 40}, {35, 17, 42}, {7, 34, 38}, {29, 39, 38}};
+            for (int i = 0; i < blobs.length; i++) {
+                int bx = x + blobs[i][0] * size / 58, by = y + blobs[i][1] * size / 58, d = blobs[i][2] * size / 58;
+                g.setPaint(new GradientPaint(bx, by, greens[(i + 1) % greens.length], bx + d, by + d, greens[i % greens.length]));
+                g.fillOval(bx, by, d, d * 3 / 4);
+            }
+        }
+
+        private void drawTitleTrainer(Graphics2D g, int x, int y) {
+            if (activeTrainer.art != null) {
+                g.setColor(new Color(24, 68, 63, 95));
+                g.fillOval(x - 4, y + 164, 92, 15);
+                BeastIllustrations.draw(g, activeTrainer.art, x - 8, y - 2, 100, 170, 1f, false);
+                return;
+            }
+            g.setColor(new Color(24, 68, 63, 95)); g.fillOval(x + 1, y + 166, 83, 16);
+            g.setPaint(new GradientPaint(x + 8, y + 60, new Color(36, 48, 67), x + 69, y + 145, new Color(16, 29, 50)));
+            g.fillRoundRect(x + 13, y + 111, 23, 51, 11, 11); g.fillRoundRect(x + 43, y + 111, 23, 51, 11, 11);
+            g.setColor(new Color(23, 42, 67)); g.fillRoundRect(x + 9, y + 153, 30, 14, 10, 10); g.fillRoundRect(x + 40, y + 153, 30, 14, 10, 10);
+            g.setColor(new Color(237, 235, 221)); g.fillRoundRect(x + 8, y + 161, 33, 9, 8, 8); g.fillRoundRect(x + 39, y + 161, 33, 9, 8, 8);
+            g.setPaint(new GradientPaint(x + 5, y + 53, new Color(61, 124, 200), x + 77, y + 128, new Color(22, 72, 137)));
+            g.fillRoundRect(x + 6, y + 61, 67, 63, 22, 22);
+            g.setColor(new Color(91, 158, 216)); g.setStroke(new BasicStroke(3)); g.drawLine(x + 40, y + 72, x + 40, y + 116);
+            g.setColor(new Color(105, 62, 43)); g.fillRoundRect(x + 46, y + 71, 29, 46, 9, 9);
+            g.setColor(new Color(150, 91, 56)); g.fillRoundRect(x + 49, y + 90, 27, 30, 8, 8);
+            g.setColor(new Color(232, 183, 145)); g.fillRoundRect(x + 27, y + 30, 36, 42, 15, 15);
+            g.setColor(new Color(59, 42, 36));
+            g.fill(new Arc2D.Double(x + 23, y + 14, 46, 47, 0, 180, Arc2D.PIE));
+            g.fillRoundRect(x + 23, y + 36, 12, 20, 8, 8);
+            g.setColor(new Color(193, 145, 112)); g.fillOval(x + 21, y + 43, 10, 13);
+            g.setColor(new Color(255, 228, 190, 170)); g.drawArc(x + 34, y + 20, 27, 21, 15, 120);
+        }
+    }
+
+    private final class TrainerSelectionPanel extends JPanel {
+        private static final int PAGE_SIZE = 9;
+        private static final int CARD_WIDTH = 270;
+        private static final int CARD_HEIGHT = 98;
+        final JButton[] choiceButtons = new JButton[PAGE_SIZE];
+        final JButton backButton = menuButton("‹  Back");
+
+        TrainerSelectionPanel() {
+            setLayout(null);
+            TrainerProfile[] profiles = TrainerProfile.values();
+            for (int i = 0; i < choiceButtons.length; i++) {
+                final int slot = i;
+                choiceButtons[i] = menuButton("CHOOSE");
+                choiceButtons[i].setToolTipText(profiles[slot].title);
+                choiceButtons[i].addActionListener(e -> beginWithTrainer(profiles[slot]));
+                add(choiceButtons[i]);
+            }
+            add(backButton);
+        }
+
+        @Override public void doLayout() {
+            double scale = Math.min(getWidth() / 960.0, getHeight() / 540.0);
+            int ox = (int) ((getWidth() - 960 * scale) / 2);
+            int oy = (int) ((getHeight() - 540 * scale) / 2);
+            int buttonHeight = Math.max(22, (int) (25 * scale));
+            for (int slot = 0; slot < choiceButtons.length; slot++) {
+                int column = slot % 3, row = slot / 3;
+                int x = 64 + column * 280;
+                int y = 112 + row * 108;
+                choiceButtons[slot].setBounds(ox + (int) ((x + 168) * scale), oy + (int) ((y + 66) * scale),
+                    Math.max(68, (int) (88 * scale)), buttonHeight);
+                choiceButtons[slot].setFont(new Font(Font.SANS_SERIF, Font.BOLD, Math.max(9, (int) (11 * scale))));
+            }
+            backButton.setBounds(ox + (int) (30 * scale), oy + (int) (24 * scale),
+                (int) (136 * scale), Math.max(32, (int) (38 * scale)));
+            backButton.setFont(new Font(Font.MONOSPACED, Font.BOLD, Math.max(10, (int) (12 * scale))));
+        }
+
+        @Override protected void paintComponent(Graphics graphics) {
+            super.paintComponent(graphics);
+            Graphics2D g = (Graphics2D) graphics.create();
+            double scale = Math.min(getWidth() / 960.0, getHeight() / 540.0);
+            int drawW = (int) (960 * scale), drawH = (int) (540 * scale);
+            int ox = (getWidth() - drawW) / 2, oy = (getHeight() - drawH) / 2;
+            g.translate(ox, oy);
+            g.scale(scale, scale);
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+
+            g.setPaint(new GradientPaint(0, 0, new Color(34, 98, 155), 0, 540, new Color(169, 224, 199)));
+            g.fillRect(0, 0, 960, 540);
+            g.setColor(new Color(255, 244, 197, 115));
+            g.fillOval(747, 15, 150, 150);
+            g.setColor(new Color(255, 255, 255, 85));
+            g.fillOval(95, 93, 34, 34);
+            g.fillOval(835, 216, 22, 22);
+            g.fillOval(472, 66, 16, 16);
+
+            Path2D distantHill = new Path2D.Double();
+            distantHill.moveTo(0, 339);
+            distantHill.curveTo(140, 255, 255, 315, 384, 279);
+            distantHill.curveTo(543, 230, 672, 321, 960, 253);
+            distantHill.lineTo(960, 540);
+            distantHill.lineTo(0, 540);
+            distantHill.closePath();
+            g.setColor(new Color(40, 120, 101, 185));
+            g.fill(distantHill);
+
+            Path2D foreground = new Path2D.Double();
+            foreground.moveTo(0, 396);
+            foreground.curveTo(165, 331, 324, 398, 482, 360);
+            foreground.curveTo(672, 314, 814, 384, 960, 325);
+            foreground.lineTo(960, 540);
+            foreground.lineTo(0, 540);
+            foreground.closePath();
+            g.setPaint(new GradientPaint(0, 350, new Color(49, 143, 92), 0, 540, new Color(20, 92, 72)));
+            g.fill(foreground);
+
+            g.setColor(new Color(13, 48, 75, 190));
+            g.fillRoundRect(54, 44, 852, 435, 34, 34);
+            g.setPaint(new GradientPaint(54, 44, new Color(249, 252, 247), 906, 479, new Color(226, 240, 229)));
+            g.fillRoundRect(50, 39, 852, 435, 34, 34);
+            g.setStroke(new BasicStroke(2.5f));
+            g.setColor(new Color(52, 112, 107));
+            g.drawRoundRect(50, 39, 852, 435, 34, 34);
+
+            g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 29));
+            g.setColor(new Color(22, 55, 78));
+            drawCentered(g, "CHOOSE YOUR TRAINER", 480, 76);
+            g.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 14));
+            g.setColor(new Color(76, 101, 111));
+            drawCentered(g, "All 9 character designs from your reference images · full body", 480, 98);
+
+            TrainerProfile[] profiles = TrainerProfile.values();
+            for (int slot = 0; slot < profiles.length; slot++) {
+                int x = 64 + (slot % 3) * 280;
+                int y = 112 + (slot / 3) * 108;
+                drawTrainerCard(g, profiles[slot], slot, x, y);
+            }
+            g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 12));
+            g.setColor(new Color(55, 83, 90));
+            drawCentered(g, "SELECT A TRAINER TO BEGIN YOUR JOURNEY", 480, 460);
+            g.dispose();
+        }
+
+        private void drawTrainerCard(Graphics2D g, TrainerProfile profile, int index, int x, int y) {
+            Color accent = profile.accent;
+            g.setColor(new Color(22, 57, 78, 24));
+            g.fillRoundRect(x + 3, y + 4, CARD_WIDTH, CARD_HEIGHT, 15, 15);
+            g.setColor(Color.WHITE);
+            g.fillRoundRect(x, y, CARD_WIDTH, CARD_HEIGHT, 15, 15);
+            g.setStroke(new BasicStroke(1.5f));
+            g.setColor(new Color(accent.getRed(), accent.getGreen(), accent.getBlue(), 180));
+            g.drawRoundRect(x, y, CARD_WIDTH, CARD_HEIGHT, 15, 15);
+            g.setColor(new Color(accent.getRed(), accent.getGreen(), accent.getBlue(), 24));
+            g.fillRoundRect(x + 5, y + 5, 70, CARD_HEIGHT - 10, 12, 12);
+            if (profile.art != null) BeastIllustrations.draw(g, profile.art, x + 8, y + 4, 62, 90, 1f, false);
+
+            g.setColor(accent.darker());
+            g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 10));
+            g.drawString(profile.label.toUpperCase(Locale.ROOT) + "  " + String.format(Locale.ROOT, "%02d", index + 1), x + 80, y + 25);
+            g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 14));
+            g.setColor(new Color(36, 52, 67));
+            g.drawString(profile.title, x + 80, y + 48);
+            g.setColor(new Color(94, 111, 124));
+            g.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 10));
+            g.drawString("Full-body trainer art", x + 80, y + 68);
+        }
+
+        private void drawCentered(Graphics2D g, String text, int centerX, int baselineY) {
+            FontMetrics fm = g.getFontMetrics();
+            g.drawString(text, centerX - fm.stringWidth(text) / 2, baselineY);
+        }
+    }
+    private static JButton menuButton(String label) {
+        JButton button = new JButton(label);
+        button.setFont(new Font(Font.MONOSPACED, Font.BOLD, 18));
+        button.setForeground(Color.WHITE);
+        button.setBackground(new Color(7, 47, 83));
+        button.setOpaque(true);
+        button.setFocusPainted(false);
+        button.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createLineBorder(new Color(91, 224, 249), 3),
+            BorderFactory.createEmptyBorder(5, 12, 5, 12)));
+        return button;
     }
 
     private void buildSelectionCard() {
@@ -252,6 +1039,9 @@ public final class BattleDemo {
         JButton open = button("Open capsule", new Color(36, 121, 102));
         open.setAlignmentX(java.awt.Component.CENTER_ALIGNMENT);
         open.addActionListener(e -> openCapsule());
+        JButton home = button("Main Menu", new Color(57, 81, 107));
+        home.setAlignmentX(java.awt.Component.CENTER_ALIGNMENT);
+        home.addActionListener(e -> showScreen("title"));
         hint.setFont(UI_SMALL);
         hint.setForeground(MUTED);
         hint.setAlignmentX(java.awt.Component.CENTER_ALIGNMENT);
@@ -259,6 +1049,8 @@ public final class BattleDemo {
         right.add(selectPreview);
         right.add(Box.createVerticalStrut(12));
         right.add(open);
+        right.add(Box.createVerticalStrut(8));
+        right.add(home);
         right.add(Box.createVerticalStrut(8));
         right.add(hint);
         right.add(Box.createVerticalGlue());
@@ -328,6 +1120,10 @@ public final class BattleDemo {
     private void openCapsule() {
         Beast player = (Beast) playerChoice.getSelectedItem();
         Beast enemy = (Beast) enemyChoice.getSelectedItem();
+        if (SAVE.hasAnyCaught() && !SAVE.caught[indexOf(player)]) {
+            hint.setText("That beast is not in your capsules yet. Catch a wild beast to unlock it.");
+            return;
+        }
         if (player == enemy) {
             enemy = ROSTER[(indexOf(enemy) + 1) % ROSTER.length];
             enemyChoice.setSelectedItem(enemy);
@@ -336,7 +1132,13 @@ public final class BattleDemo {
         }
         arena.player = player;
         arena.enemy = enemy;
-        arena.player.hp = arena.enemy.hp = 100;
+        if (!SAVE.hasAnyCaught()) SAVE.chooseStarter(player);
+        arena.player.maxHp = 100 + (SAVE.level(player) - 1) * 10;
+        arena.player.level = SAVE.level(player);
+        arena.enemy.level = 1 + arena.random.nextInt(3);
+        arena.enemy.maxHp = 100 + (arena.enemy.level - 1) * 10;
+        arena.player.hp = arena.player.maxHp;
+        arena.enemy.hp = arena.enemy.maxHp;
         arena.player.buffTurns = arena.player.weakenedTurns = 0;
         arena.enemy.buffTurns = arena.enemy.weakenedTurns = 0;
         arena.attunementBonus = false;
@@ -345,12 +1147,25 @@ public final class BattleDemo {
         arena.enteredEcho.clear();
         arena.pendingEnemyMove = null;
         arena.enemyTurnPendingAfterCapture = false;
+        arena.battleRewardGranted = false;
+        arena.ethicsQuestionsAnswered = 0;
+        arena.resultMessage = "";
+        arena.lastQuestionIndex = -1;
+        arena.pendingMove = null;
+        arena.currentQuestion = null;
         arena.potions = 2;
         updateBagLabel();
         arena.trainerBattle = modeChoice.getSelectedIndex() == 1;
-        arena.phase = Phase.SUMMONING;
+        if (arena.trainerBattle) {
+            TrainerProfile[] opponents = TrainerProfile.values();
+            int opponentIndex = arena.random.nextInt(opponents.length);
+            if (opponents[opponentIndex] == activeTrainer) opponentIndex = (opponentIndex + 1) % opponents.length;
+            arena.opponentTrainer = opponents[opponentIndex];
+        }
+        arena.phase = Phase.THROWING_CAPSULE;
+        arena.recallAfterThrow = false;
         arena.frameNo = 0;
-        arena.message = player.name + "'s capsule is opening!";
+        arena.message = activeTrainer.title + " throws out " + player.name + "!";
         setActionsEnabled(false);
         arena.requestFocusInWindow();
         cards.setVisible(false);
@@ -370,7 +1185,7 @@ public final class BattleDemo {
         } else if (arena.enemy != null && arena.enemy.hp > CAPTURE_WEAK_HP) {
             captureButton.setToolTipText("Weaken the wild Beast to 65 HP or less first.");
         } else {
-            captureButton.setToolTipText("Throw a capsule at the weakened wild Beast.");
+            captureButton.setToolTipText("Choose one of eight capsules; type affinity changes the wild catch chance.");
         }
         if (attuneButton != null) attuneButton.setEnabled(arena.phase == Phase.COMMAND && arena.canAttune());
         if (listenButton != null) listenButton.setEnabled(arena.phase == Phase.COMMAND && arena.pendingEnemyMove == null);
@@ -390,12 +1205,20 @@ public final class BattleDemo {
         if (bagButton != null) bagButton.setText("Bag  ·  " + arena.potions + (arena.potions == 1 ? " potion" : " potions"));
     }
 
-    private void updateSelectedPreview() {
+        private void updateSelectedPreview() {
         Beast beast = (Beast) playerChoice.getSelectedItem();
         if (beast == null) return;
-        selectPreview.setText("CAPSULE  ·  " + beast.name.toUpperCase(Locale.ROOT) + "  ·  " + beast.types().toUpperCase(Locale.ROOT));
+        selectPreview.setText("CAPSULE  ·  " + beast.name.toUpperCase(Locale.ROOT) + "  ·  LV " + SAVE.level(beast));
         arena.preview = beast;
         arena.repaint();
+    }
+
+    private void updateSelectionHint() {
+        Beast selected = (Beast) playerChoice.getSelectedItem();
+        if (selected == null) return;
+        if (!SAVE.hasAnyCaught()) hint.setText("Choose your first beast. It becomes your starting companion.");
+        else if (!SAVE.caught[indexOf(selected)]) hint.setText("Wild beast: catch it in battle before it can join your capsules.");
+        else hint.setText("Ready to battle. Earn XP after winning a battle or catching a wild beast.");
     }
 
     private void refreshMoveButtons() {
@@ -412,27 +1235,22 @@ public final class BattleDemo {
 
     private void chooseMove(int slot) {
         if (arena.phase != Phase.COMMAND && arena.phase != Phase.MOVE_SELECT) return;
-        arena.move = arena.player.moves.get(slot);
-        arena.effectActor = null;
-        arena.effectKind = null;
+        arena.pendingMove = arena.player.moves.get(slot);
+        arena.currentQuestion = arena.nextEthicsQuestion();
+        arena.phase = Phase.ETHICS_QUESTION;
         arena.menuFocus = 0;
-        arena.phase = Phase.ANIMATING;
-        arena.frameNo = 0;
-        arena.message = arena.player.name + " used " + arena.move.name + "!";
         setActionsEnabled(false);
         arena.requestFocusInWindow();
-        refreshMoveButtons();
-        showCard("command");
         arena.repaint();
     }
 
     private void usePotion() {
         if (arena.phase != Phase.COMMAND) return;
         if (arena.potions <= 0) { arena.message = "Your bag is empty."; arena.repaint(); return; }
-        if (arena.player.hp >= 100) { arena.message = arena.player.name + " is already at full health."; arena.repaint(); return; }
+        if (arena.player.hp >= arena.player.maxHp) { arena.message = arena.player.name + " is already at full health."; arena.repaint(); return; }
         arena.potions--;
         updateBagLabel();
-        arena.player.hp = Math.min(100, arena.player.hp + 32);
+        arena.player.hp = Math.min(arena.player.maxHp, arena.player.hp + 32);
         arena.effectKind = Kind.BUFF; arena.effectActor = arena.player; arena.phase = Phase.ANIMATING; arena.frameNo = 0;
         arena.message = "Potion restored 32 HP. " + arena.potions + " left.";
         setActionsEnabled(false);
@@ -442,8 +1260,8 @@ public final class BattleDemo {
 
     private void runAway() {
         if (arena.phase != Phase.COMMAND) return;
-        arena.message = "You returned " + arena.player.name + " to its capsule and escaped.";
-        arena.phase = Phase.RECALL_PLAYER; arena.frameNo = 0; arena.afterRecall = Phase.SELECT;
+        arena.completeBattle(0, "battle", "You escaped the encounter.");
+        arena.startRecallThrow();
         setActionsEnabled(false);
         arena.requestFocusInWindow();
         arena.repaint();
@@ -459,14 +1277,26 @@ public final class BattleDemo {
             arena.showActionNotice("Weaken " + arena.enemy.name + " to 65 HP or less before throwing a capsule.");
             return;
         }
+        arena.phase = Phase.CAPSULE_SELECT;
+        arena.frameNo = 0;
+        arena.menuFocus = 0;
+        arena.message = "Choose a cylindrical capsule. Its type changes the catch chance.";
+        setActionsEnabled(false);
+        arena.requestFocusInWindow();
+        arena.repaint();
+    }
+
+    private void throwCapsule(CapsuleType capsuleType) {
+        if (arena.phase != Phase.CAPSULE_SELECT || !arena.canCapture()) return;
+        arena.selectedCapsule = capsuleType;
         arena.phase = Phase.ANIMATING; arena.frameNo = 0; arena.capturing = true;
-        double chance = arena.captureChance();
+        double chance = arena.captureChance(capsuleType);
         arena.captureSuccess = arena.random.nextDouble() < chance;
         arena.attunementBonus = false;
         arena.captureBreakEffect = false;
         arena.enemyTurnPendingAfterCapture = false;
-        arena.message = String.format(Locale.ROOT, "Capsule thrown with a %d%% chance. It is not guaranteed!",
-            (int) Math.round(chance * 100));
+        arena.message = String.format(Locale.ROOT, "%s throws a %s capsule · %d%% catch chance.",
+            activeTrainer.title, capsuleType.label, (int) Math.round(chance * 100));
         setActionsEnabled(false);
         arena.requestFocusInWindow();
         arena.repaint();
@@ -494,42 +1324,37 @@ public final class BattleDemo {
         return 0;
     }
 
-    private void returnToCapsules(String text) {
-        arena.message = text;
-        arena.phase = Phase.SELECT;
-        arena.player = null;
-        arena.enemy = null;
-        arena.frameNo = 0;
-        updateSelectedPreview();
-        showCard("select");
-        cards.setVisible(true);
-        frame.revalidate();
-        hint.setText(text);
-    }
-
     private final class Arena extends JPanel {
         Beast player;
         Beast enemy;
+        TrainerProfile opponentTrainer = TrainerProfile.MALE_DARK;
         Beast preview = ROSTER[0];
         Move move;
         Kind effectKind;
         Beast effectActor;
         Phase phase = Phase.SELECT;
-        Phase afterRecall = Phase.SELECT;
         String message = "Select a capsule to begin.";
         boolean trainerBattle;
         boolean capturing;
+        boolean recallAfterThrow;
         boolean captureSuccess;
+        CapsuleType selectedCapsule = CapsuleType.FIELD;
         boolean attunementBonus;
         boolean attunementEffect;
         boolean captureBreakEffect;
         boolean enemyTurnPendingAfterCapture;
         Move pendingEnemyMove;
+        Move pendingMove;
+        EthicsQuestion currentQuestion;
+        int lastQuestionIndex = -1;
+        int ethicsQuestionsAnswered;
+        boolean ethicsCorrect;
+        boolean battleRewardGranted;
+        String resultMessage = "";
         private final List<EchoSymbol> enteredEcho = new ArrayList<>(3);
         int potions = 2;
         int frameNo;
         int tick;
-        int playerTurns;
         int menuFocus;
         private String lastDialogText = "";
         private Phase lastDialogPhase;
@@ -555,7 +1380,24 @@ public final class BattleDemo {
             });
             addKeyListener(new KeyAdapter() {
                 @Override public void keyPressed(KeyEvent e) {
-                    if (isDialogActive() && (e.getKeyCode() == KeyEvent.VK_SPACE || e.getKeyCode() == KeyEvent.VK_ENTER || e.getKeyCode() == KeyEvent.VK_Z)) {
+                    if (phase == Phase.CAPSULE_SELECT) {
+                        int key = e.getKeyCode();
+                        if (key >= KeyEvent.VK_1 && key <= KeyEvent.VK_8) {
+                            throwCapsule(CapsuleType.values()[key - KeyEvent.VK_1]);
+                        } else if (key >= KeyEvent.VK_NUMPAD1 && key <= KeyEvent.VK_NUMPAD8) {
+                            throwCapsule(CapsuleType.values()[key - KeyEvent.VK_NUMPAD1]);
+                        } else if (key == KeyEvent.VK_ESCAPE) {
+                            phase = Phase.COMMAND;
+                            setActionsEnabled(true);
+                            repaint();
+                        }
+                    } else if (phase == Phase.ETHICS_QUESTION) {
+                        int key = e.getKeyCode();
+                        if (key >= KeyEvent.VK_1 && key <= KeyEvent.VK_3) answerEthics(key - KeyEvent.VK_1);
+                        else if (key >= KeyEvent.VK_NUMPAD1 && key <= KeyEvent.VK_NUMPAD3) answerEthics(key - KeyEvent.VK_NUMPAD1);
+                    } else if (phase == Phase.ETHICS_FEEDBACK && (e.getKeyCode() == KeyEvent.VK_SPACE || e.getKeyCode() == KeyEvent.VK_ENTER || e.getKeyCode() == KeyEvent.VK_Z)) {
+                        continueAfterEthics();
+                    } else if (isDialogActive() && (e.getKeyCode() == KeyEvent.VK_SPACE || e.getKeyCode() == KeyEvent.VK_ENTER || e.getKeyCode() == KeyEvent.VK_Z)) {
                         advanceDialog();
                     } else if (phase == Phase.ATTUNE_INPUT) {
                         int key = e.getKeyCode();
@@ -573,7 +1415,7 @@ public final class BattleDemo {
         }
 
         private boolean isDialogActive() {
-            return phase == Phase.SUMMONING || phase == Phase.ANIMATING || phase == Phase.RECALL_PLAYER
+            return phase == Phase.THROWING_CAPSULE || phase == Phase.SUMMONING || phase == Phase.ANIMATING || phase == Phase.RECALL_PLAYER
                 || phase == Phase.RECALL_ENEMY || phase == Phase.ACTION_NOTICE || phase == Phase.RESULT;
         }
 
@@ -680,12 +1522,13 @@ public final class BattleDemo {
             repaint();
         }
 
-        private double captureChance() {
+        private double captureChance(CapsuleType capsuleType) {
             if (enemy == null) return 0;
             double chance = 0.20 + (100 - enemy.hp) * 0.005;
             if (enemy.weakenedTurns > 0) chance += 0.10;
             if (attunementBonus) chance += 0.25;
-            return Math.min(0.90, chance);
+            chance += capsuleType.bonusAgainst(enemy);
+            return Math.max(0.05, Math.min(0.95, chance));
         }
 
         private String moveCategory(Kind kind) {
@@ -694,6 +1537,86 @@ public final class BattleDemo {
                 case BUFF -> "a SELF-BUFF";
                 case DEBUFF -> "a DEBUFF";
             };
+        }
+
+        private EthicsQuestion nextEthicsQuestion() {
+            int index = random.nextInt(ETHICS_QUESTIONS.size());
+            if (index == lastQuestionIndex) index = (index + 1) % ETHICS_QUESTIONS.size();
+            lastQuestionIndex = index;
+            return ETHICS_QUESTIONS.get(index);
+        }
+
+        private void answerEthics(int answerIndex) {
+            if (phase != Phase.ETHICS_QUESTION || currentQuestion == null) return;
+            ethicsCorrect = answerIndex == currentQuestion.correctIndex;
+            ethicsQuestionsAnswered++;
+            phase = Phase.ETHICS_FEEDBACK;
+            frameNo = 0;
+            menuFocus = answerIndex;
+            repaint();
+        }
+
+        private void continueAfterEthics() {
+            if (phase != Phase.ETHICS_FEEDBACK || pendingMove == null) return;
+            if (ethicsCorrect) {
+                move = pendingMove;
+                pendingMove = null;
+                effectActor = player;
+                effectKind = null;
+                phase = Phase.ANIMATING;
+                frameNo = 0;
+                message = player.name + " used " + move.name + "!";
+                setActionsEnabled(false);
+            } else {
+                pendingMove = null;
+                currentQuestion = null;
+                enemyTurn();
+            }
+            repaint();
+        }
+
+        private void syncPlayerProgress(int oldMaxHp) {
+            if (player == null) return;
+            player.level = SAVE.level(player);
+            player.maxHp = 100 + (player.level - 1) * 10;
+            if (player.maxHp > oldMaxHp) player.hp += player.maxHp - oldMaxHp;
+            player.hp = Math.min(player.maxHp, player.hp);
+        }
+
+        private void startRecallThrow() {
+            recallAfterThrow = true;
+            phase = Phase.THROWING_CAPSULE;
+            frameNo = 0;
+            message = activeTrainer.title + " throws a capsule to recall " + player.name + "!";
+            setActionsEnabled(false);
+        }
+
+        private void completeBattle(int reward, String rewardKind, String outcome) {
+            if (battleRewardGranted || player == null) return;
+            battleRewardGranted = true;
+            int oldLevel = SAVE.level(player);
+            int oldMaxHp = player.maxHp;
+            if (reward > 0) SAVE.addExperience(player, reward);
+            syncPlayerProgress(oldMaxHp);
+            String levelText = player.level > oldLevel ? " Level up! " + player.name + " is now Lv. " + player.level + "." : "";
+            String rewardText = reward > 0 ? " +" + reward + " " + rewardKind + " XP." : " No XP earned.";
+            resultMessage = outcome + rewardText + levelText;
+            message = resultMessage;
+        }
+
+        private void finishToResult() {
+            if (player != null && player.hp <= 0) player.hp = player.maxHp;
+            phase = Phase.RESULT;
+            frameNo = 0;
+            message = resultMessage;
+            pendingMove = null;
+            ((java.awt.CardLayout) cards.getLayout()).show(cards, "select");
+            cards.setVisible(true);
+            setActionsEnabled(false);
+            hint.setText(resultMessage);
+            playerChoice.repaint();
+            updateSelectedPreview();
+            frame.revalidate();
         }
 
         private void advanceDialog() {
@@ -708,7 +1631,15 @@ public final class BattleDemo {
 
         private void updateMenuFocus(int mouseX, int mouseY) {
             int[] point = toVirtual(mouseX, mouseY);
-            if (phase == Phase.COMMAND && point[0] >= 20 && point[0] <= 430 && point[1] >= 396 && point[1] <= 526) {
+            if (phase == Phase.ETHICS_QUESTION && point[0] >= 48 && point[0] <= 627 && point[1] >= 439 && point[1] <= 526) {
+                menuFocus = Math.min(2, Math.max(0, (point[1] - 439) / 30));
+                repaint();
+            } else if (phase == Phase.CAPSULE_SELECT && point[0] >= 48 && point[0] <= 912 && point[1] >= 390 && point[1] <= 506) {
+                int col = Math.min(3, Math.max(0, (point[0] - 48) / 216));
+                int row = Math.min(1, Math.max(0, (point[1] - 390) / 62));
+                menuFocus = row * 4 + col;
+                repaint();
+            } else if (phase == Phase.COMMAND && point[0] >= 20 && point[0] <= 430 && point[1] >= 396 && point[1] <= 526) {
                 int col = Math.min(2, Math.max(0, (point[0] - 20) / 137));
                 int row = point[1] < 461 ? 0 : 1;
                 menuFocus = row * 3 + col;
@@ -728,7 +1659,18 @@ public final class BattleDemo {
         private void handleMenuClick(int mouseX, int mouseY) {
             int[] point = toVirtual(mouseX, mouseY);
             int x = point[0], y = point[1];
-            if (phase == Phase.COMMAND && x >= 20 && x <= 430 && y >= 396 && y <= 526) {
+            if (phase == Phase.ETHICS_QUESTION && x >= 48 && x <= 627 && y >= 439 && y <= 526) {
+                int answer = Math.min(2, Math.max(0, (y - 439) / 30));
+                answerEthics(answer);
+            } else if (phase == Phase.ETHICS_FEEDBACK && x >= 32 && x <= 928 && y >= 350 && y <= 530) {
+                continueAfterEthics();
+            } else if (phase == Phase.CAPSULE_SELECT && x >= 48 && x <= 912 && y >= 390 && y <= 506) {
+                int col = Math.min(3, Math.max(0, (x - 48) / 216));
+                int row = Math.min(1, Math.max(0, (y - 390) / 62));
+                int choice = row * 4 + col;
+                menuFocus = choice;
+                throwCapsule(CapsuleType.values()[choice]);
+            } else if (phase == Phase.COMMAND && x >= 20 && x <= 430 && y >= 396 && y <= 526) {
                 int col = Math.min(2, Math.max(0, (x - 20) / 137));
                 int row = y < 461 ? 0 : 1;
                 int choice = row * 3 + col;
@@ -765,11 +1707,11 @@ public final class BattleDemo {
         }
 
         private int[] toVirtual(int mouseX, int mouseY) {
-            double scale = Math.min(getWidth() / 320.0, getHeight() / 180.0);
-            double ox = (getWidth() - 320 * scale) / 2.0;
-            double oy = (getHeight() - 180 * scale) / 2.0;
-            int vx = (int) Math.round((mouseX - ox) / scale * W / 320.0);
-            int vy = (int) Math.round((mouseY - oy) / scale * H / 180.0);
+            double scale = Math.min(getWidth() / (double) W, getHeight() / (double) H);
+            double ox = (getWidth() - W * scale) / 2.0;
+            double oy = (getHeight() - H * scale) / 2.0;
+            int vx = (int) Math.round((mouseX - ox) / scale);
+            int vy = (int) Math.round((mouseY - oy) / scale);
             return new int[] {vx, vy};
         }
 
@@ -780,7 +1722,8 @@ public final class BattleDemo {
                 if (isDialogActive() && !dialogDismissed && visibleDialogChars < lastDialogText.length()) {
                     visibleDialogChars = Math.min(lastDialogText.length(), visibleDialogChars + 2);
                 }
-                if (phase != Phase.SELECT && phase != Phase.COMMAND && phase != Phase.MOVE_SELECT
+            if (phase != Phase.SELECT && phase != Phase.COMMAND && phase != Phase.MOVE_SELECT
+                    && phase != Phase.CAPSULE_SELECT && phase != Phase.ETHICS_QUESTION && phase != Phase.ETHICS_FEEDBACK
                         && phase != Phase.ATTUNE_INPUT && phase != Phase.RESULT) {
                     frameNo++;
                     advanceAnimation();
@@ -790,7 +1733,17 @@ public final class BattleDemo {
         }
 
         private void advanceAnimation() {
-            if (phase == Phase.ATTUNE_REVEAL && frameNo >= 45) {
+            if (phase == Phase.THROWING_CAPSULE && frameNo >= 20 && dialogCanContinue()) {
+                if (recallAfterThrow) {
+                    phase = Phase.RECALL_PLAYER;
+                    frameNo = 0;
+                    message = player.name + " returns to its capsule in a shimmer of light.";
+                } else {
+                    phase = Phase.SUMMONING;
+                    frameNo = 0;
+                    message = player.name + "'s capsule opens!";
+                }
+            } else if (phase == Phase.ATTUNE_REVEAL && frameNo >= 45) {
                 phase = Phase.ATTUNE_INPUT;
                 frameNo = 0;
                 menuFocus = 0;
@@ -805,7 +1758,11 @@ public final class BattleDemo {
                 if (capturing && frameNo >= 28 && dialogCanContinue()) {
                     capturing = false;
                     if (captureSuccess) {
-                        phase = Phase.RECALL_ENEMY; frameNo = 0; afterRecall = Phase.RESULT;
+                        boolean firstCatch = !SAVE.caught[indexOf(enemy)];
+                        SAVE.catchBeast(enemy);
+                        String learning = firstCatch ? " New learning unlocked: " + LESSONS[indexOf(enemy)] : " Its learning is already in your journal.";
+                        completeBattle(40, "capture", "Captured " + enemy.name + "!" + learning);
+                        phase = Phase.RECALL_ENEMY; frameNo = 0;
                         message = enemy.name + " joined your capsules!";
                     } else {
                         phase = Phase.ANIMATING; frameNo = 0;
@@ -822,7 +1779,9 @@ public final class BattleDemo {
                         Move completedMove = move;
                         move = null;
                         if (enemy.hp <= 0) {
-                            enemy.hp = 0; phase = Phase.RECALL_ENEMY; frameNo = 0; afterRecall = Phase.RESULT;
+                            enemy.hp = 0;
+                            completeBattle(50, "battle", "Victory!");
+                            phase = Phase.RECALL_ENEMY; frameNo = 0;
                             message = enemy.name + " fainted and returned to its capsule.";
                         } else {
                             if (player.buffTurns > 0 && completedMove.kind != Kind.BUFF) player.buffTurns--;
@@ -838,22 +1797,10 @@ public final class BattleDemo {
                     if (enemyActsAfterEffect) enemyTurn();
                 }
             } else if (phase == Phase.RECALL_PLAYER && frameNo >= 30 && dialogCanContinue()) {
-                Phase destination = afterRecall;
-                if (player != null && player.hp <= 0) player.hp = 100;
-                returnToCapsules(destination == Phase.SELECT ? message : "Battle ended.");
+                finishToResult();
             } else if (phase == Phase.RECALL_ENEMY && frameNo >= 30 && dialogCanContinue()) {
-                phase = Phase.RESULT; frameNo = 0;
-                if (captureSuccess) {
-                    message = enemy.name + " was captured and returned to your capsules.";
-                    captureSuccess = false;
-                } else {
-                    message = enemy.name + " returned to its capsule. You can choose another encounter.";
-                }
-                ((java.awt.CardLayout) cards.getLayout()).show(cards, "select");
-                cards.setVisible(true);
-                frame.revalidate();
-                setActionsEnabled(false);
-                hint.setText(message);
+                captureSuccess = false;
+                startRecallThrow();
             } else if (phase == Phase.RESULT && frameNo > 3) {
                 // Result stays visible until the next capsule is opened.
             }
@@ -862,7 +1809,7 @@ public final class BattleDemo {
         private void applyMove() {
             if (capturing || move == null) return;
             if (move.kind == Kind.DAMAGE) {
-                int damage = 13 + random.nextInt(8);
+                int damage = 13 + random.nextInt(8) + (player.level - 1) * 2;
                 if (player.buffTurns > 0) damage += 4;
                 if (enemy.weakenedTurns > 0) damage = (int) Math.round(damage * 1.3);
                 enemy.hp = Math.max(0, enemy.hp - damage);
@@ -879,8 +1826,9 @@ public final class BattleDemo {
 
         private void enemyTurn() {
             if (player.hp <= 0) {
-                player.hp = 0; phase = Phase.RECALL_PLAYER; frameNo = 0; afterRecall = Phase.SELECT;
-                message = player.name + " fainted and returned to its capsule in motes of light.";
+                player.hp = 0;
+                completeBattle(0, "battle", "Defeat.");
+                startRecallThrow();
                 return;
             }
             Move counter = pendingEnemyMove != null
@@ -896,7 +1844,7 @@ public final class BattleDemo {
         private void applyEnemyMove() {
             if (move == null) return;
             if (move.kind == Kind.DAMAGE) {
-                int damage = 8 + random.nextInt(8);
+                int damage = 8 + random.nextInt(8) + (enemy.level - 1) * 2;
                 if (enemy.buffTurns > 0) damage += 4;
                 if (player.weakenedTurns > 0) damage += 4;
                 player.hp = Math.max(0, player.hp - damage);
@@ -916,8 +1864,9 @@ public final class BattleDemo {
             if (player.weakenedTurns > 0 && completedMove != null && completedMove.kind != Kind.DEBUFF) player.weakenedTurns--;
             move = null; effectActor = null; effectKind = null;
             if (player.hp <= 0) {
-                player.hp = 0; phase = Phase.RECALL_PLAYER; frameNo = 0; afterRecall = Phase.SELECT;
-                message = player.name + " fainted and returned to its capsule in motes of light.";
+                player.hp = 0;
+                completeBattle(0, "battle", "Defeat.");
+                startRecallThrow();
             } else {
                 phase = Phase.COMMAND; frameNo = 0;
                 menuFocus = 0;
@@ -929,23 +1878,25 @@ public final class BattleDemo {
 
         @Override protected void paintComponent(Graphics graphics) {
             super.paintComponent(graphics);
-            BufferedImage pixelFrame = new BufferedImage(320, 180, BufferedImage.TYPE_INT_RGB);
-            Graphics2D scene = pixelFrame.createGraphics();
-            scene.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
-            scene.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_OFF);
-            scene.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
-            scene.scale(320.0 / W, 180.0 / H);
+            BufferedImage sceneFrame = new BufferedImage(W, H, BufferedImage.TYPE_INT_ARGB);
+            Graphics2D scene = sceneFrame.createGraphics();
+            scene.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            scene.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+            scene.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+            scene.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+            scene.setRenderingHint(RenderingHints.KEY_ALPHA_INTERPOLATION, RenderingHints.VALUE_ALPHA_INTERPOLATION_QUALITY);
             drawBackdrop(scene);
             if (phase == Phase.SELECT) drawSelectionScene(scene);
             else drawBattle(scene);
             scene.dispose();
 
             Graphics2D screen = (Graphics2D) graphics.create();
-            double scale = Math.min(getWidth() / 320.0, getHeight() / 180.0);
-            int drawW = (int) Math.round(320 * scale), drawH = (int) Math.round(180 * scale);
+            double scale = Math.min(getWidth() / (double) W, getHeight() / (double) H);
+            int drawW = (int) Math.round(W * scale), drawH = (int) Math.round(H * scale);
             int ox = (getWidth() - drawW) / 2, oy = (getHeight() - drawH) / 2;
-            screen.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
-            screen.drawImage(pixelFrame, ox, oy, drawW, drawH, null);
+            screen.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+            screen.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+            screen.drawImage(sceneFrame, ox, oy, drawW, drawH, null);
             drawReadableOverlayText(screen, ox, oy, scale);
             screen.dispose();
         }
@@ -953,7 +1904,7 @@ public final class BattleDemo {
         private void drawReadableOverlayText(Graphics2D target, int ox, int oy, double scale) {
             Graphics2D g = (Graphics2D) target.create();
             g.translate(ox, oy);
-            g.scale(scale / 3.0, scale / 3.0);
+            g.scale(scale, scale);
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
             g.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_ON);
@@ -977,8 +1928,11 @@ public final class BattleDemo {
             centered(g, beast.name, 601, 405);
             g.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 16)); g.setColor(MUTED);
             centered(g, beast.types(), 601, 428);
-            g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 16)); g.setColor(new Color(36, 121, 102));
-            centered(g, "Choose one of 27 capsules below", 337, 414);
+            g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 13)); g.setColor(new Color(36, 121, 102));
+            centered(g, "LEVEL " + SAVE.level(beast) + "  ·  EXP " + SAVE.nextLevelXp(beast) + "/100  ·  "
+                + (SAVE.caught[indexOf(beast)] ? "CAUGHT" : "WILD"), 601, 450);
+            g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 15)); g.setColor(new Color(36, 121, 102));
+            centered(g, "Catch wild beasts to unlock new capsules and lessons", 337, 414);
         }
 
         private void drawBattleOverlay(Graphics2D g) {
@@ -990,6 +1944,8 @@ public final class BattleDemo {
             }
             if (phase == Phase.COMMAND) drawCommandText(g);
             else if (phase == Phase.MOVE_SELECT) drawMoveText(g);
+            else if (phase == Phase.CAPSULE_SELECT) drawCapsulePickerText(g);
+            else if (phase == Phase.ETHICS_QUESTION || phase == Phase.ETHICS_FEEDBACK) drawEthicsText(g);
             else if (phase == Phase.ATTUNE_REVEAL || phase == Phase.ATTUNE_INPUT) drawAttunementText(g);
             else if (phase == Phase.SUMMONING) {
                 g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 17));
@@ -1010,12 +1966,17 @@ public final class BattleDemo {
                 g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 15));
             }
             if (right) rightText(g, name, x + 180, y + 29); else g.drawString(name, x + 18, y + 29);
+            g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 12)); g.setColor(new Color(44, 91, 75));
+            if (right) rightText(g, "Lv." + beast.level, x + 180, y + 44); else g.drawString("Lv." + beast.level, x + 18, y + 44);
             g.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13)); g.setColor(MUTED);
-            if (right) rightText(g, beast.types().toUpperCase(Locale.ROOT), x + 180, y + 48);
-            else g.drawString(beast.types().toUpperCase(Locale.ROOT), x + 18, y + 48);
+            if (right) rightText(g, beast.types().toUpperCase(Locale.ROOT), x + 180, y + 59);
+            else g.drawString(beast.types().toUpperCase(Locale.ROOT), x + 18, y + 59);
             g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 14)); g.setColor(INK);
-            String hp = beast.hp + "/100 HP";
-            if (right) rightText(g, hp, x + 180, y + 82); else g.drawString(hp, x + 18, y + 82);
+            String hp = beast.hp + "/" + beast.maxHp + " HP";
+            if (right) rightText(g, hp, x + 180, y + 84); else g.drawString(hp, x + 18, y + 84);
+            g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 10)); g.setColor(MUTED);
+            String xp = "EXP " + SAVE.nextLevelXp(beast) + "/100";
+            if (right) rightText(g, xp, x + 180, y + 101); else g.drawString(xp, x + 18, y + 101);
         }
 
         private void drawStatusSigilText(Graphics2D g, int x, int y, String label) {
@@ -1099,6 +2060,92 @@ public final class BattleDemo {
             }
         }
 
+        private void drawEthicsPanel(Graphics2D g) {
+            drawPixelPanel(g, 32, 350, 896, 178);
+            g.setColor(new Color(113, 128, 99));
+            g.fillRect(642, 365, 3, 150);
+            if (phase == Phase.ETHICS_QUESTION) {
+                for (int i = 0; i < 3; i++) {
+                    int y = 441 + i * 30;
+                    g.setColor(menuFocus == i ? new Color(204, 237, 207) : new Color(239, 241, 229));
+                    g.fillRect(52, y, 570, 26);
+                    g.setColor(menuFocus == i ? new Color(29, 119, 75) : new Color(82, 97, 72));
+                    g.drawRect(52, y, 570, 26);
+                }
+            } else {
+                g.setColor(new Color(235, 246, 215));
+                g.fillRect(666, 392, 232, 112);
+                g.setColor(new Color(89, 139, 78));
+                g.drawRect(666, 392, 232, 112);
+            }
+        }
+
+        private void drawEthicsText(Graphics2D g) {
+            if (currentQuestion == null) return;
+            g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 17));
+            g.setColor(new Color(35, 100, 70));
+            g.drawString("✦  ECHO CHALLENGE: COLLEGE ETHICS", 61, 379);
+            g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 14));
+            g.setColor(new Color(34, 66, 53));
+            List<String> questionLines = wrapText(g, currentQuestion.scenario, 548);
+            for (int i = 0; i < Math.min(2, questionLines.size()); i++) {
+                g.drawString(questionLines.get(i), 61, 405 + i * 21);
+            }
+
+            if (phase == Phase.ETHICS_QUESTION) {
+                g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 14));
+                for (int i = 0; i < currentQuestion.answers.length; i++) {
+                    String answer = (char) ('A' + i) + ".  " + currentQuestion.answers[i];
+                    g.setColor(new Color(29, 63, 52));
+                    g.drawString(ellipsize(g, answer, 545), 69, 459 + i * 30);
+                }
+                g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 15));
+                g.setColor(new Color(26, 56, 49));
+                centered(g, "ETHICS LESSON", 782, 384);
+                g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 13));
+                g.setColor(new Color(72, 87, 72));
+                centered(g, currentQuestion.topic.toUpperCase(Locale.ROOT), 782, 407);
+                drawEthicsProgress(g);
+                g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 21));
+                g.setColor(new Color(35, 132, 70));
+                centered(g, "XP ON WIN / CATCH", 782, 492);
+                g.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 10));
+                g.setColor(MUTED);
+                centered(g, "NOT FOR ANSWERS", 782, 515);
+            } else {
+                g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 24));
+                g.setColor(ethicsCorrect ? new Color(27, 116, 65) : new Color(157, 82, 48));
+                g.drawString(ethicsCorrect ? "CORRECT!" : "LET'S REVIEW", 682, 423);
+                g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 11));
+                g.setColor(new Color(34, 61, 50));
+                String correctAnswer = "BEST: " + (char) ('A' + currentQuestion.correctIndex) + ". "
+                    + currentQuestion.answers[currentQuestion.correctIndex];
+                g.drawString(ellipsize(g, correctAnswer, 208), 682, 443);
+                g.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+                List<String> explanation = wrapText(g, currentQuestion.explanation, 205);
+                for (int i = 0; i < Math.min(2, explanation.size()); i++) {
+                    g.drawString(ellipsize(g, explanation.get(i), 205), 682, 464 + i * 17);
+                }
+                g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 13));
+                g.setColor(ethicsCorrect ? new Color(35, 132, 70) : new Color(126, 75, 53));
+                centered(g, "NO QUESTION XP", 782, 497);
+                g.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+                g.setColor(MUTED);
+                centered(g, "XP AFTER WIN OR CATCH", 782, 519);
+            }
+        }
+
+        private void drawEthicsProgress(Graphics2D g) {
+            g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 13));
+            g.setColor(new Color(37, 57, 46));
+            centered(g, "QUESTION " + (ethicsQuestionsAnswered % 3 + 1) + " / 3", 782, 435);
+            int x = 680, y = 448, w = 204;
+            g.setColor(new Color(41, 56, 46)); g.fillRect(x, y, w, 18);
+            g.setColor(new Color(194, 211, 178)); g.fillRect(x + 3, y + 3, w - 6, 12);
+            int filled = (w - 6) * (ethicsQuestionsAnswered % 3) / 3;
+            g.setColor(new Color(61, 181, 66)); g.fillRect(x + 3, y + 3, filled, 12);
+        }
+
         private List<String> wrapText(Graphics2D g, String text, int maxWidth) {
             List<String> lines = new ArrayList<>();
             if (text.isEmpty()) return lines;
@@ -1130,53 +2177,101 @@ public final class BattleDemo {
         }
 
         private void drawBackdrop(Graphics2D g) {
-            g.setColor(new Color(54, 142, 56)); g.fillRect(0, 0, W, H);
-            g.setColor(new Color(20, 81, 39)); g.fillRect(0, 0, W, 164);
-            Random plants = new Random(12);
-            for (int x = -12; x < W + 24; x += 32) {
-                int top = 8 + plants.nextInt(36);
-                g.setColor(new Color(91, 58, 33)); g.fillRect(x + 9, top + 66, 13, 86);
-                g.setColor(new Color(20, 94, 38)); g.fillRect(x - 9, top + 27, 48, 58);
-                g.setColor(new Color(38, 137, 43)); g.fillRect(x - 5, top + 8, 42, 54);
-                for (int j = 0; j < 16; j++) {
-                    int lx = x - 5 + plants.nextInt(44), ly = top + 10 + plants.nextInt(58);
-                    g.setColor(plants.nextBoolean() ? new Color(71, 171, 46) : new Color(31, 114, 40));
-                    g.fillRect(lx, ly, 9, 8);
-                }
-                g.setColor(new Color(120, 183, 55));
-                g.fillRect(x + 1, top + 18, 11, 6); g.fillRect(x + 23, top + 45, 9, 6);
+            g.setPaint(new GradientPaint(0, 0, new Color(184, 226, 239), 0, 245, new Color(205, 223, 166)));
+            g.fillRect(0, 0, W, H);
+            g.setColor(new Color(255, 248, 197, 85)); g.fillOval(342, -73, 284, 217);
+            g.setPaint(new GradientPaint(0, 174, new Color(111, 167, 76), 0, H, new Color(31, 102, 53)));
+            g.fillRect(0, 174, W, H - 174);
+
+            Random foliage = new Random(44);
+            for (int i = 0; i < 25; i++) {
+                int x = -52 + i * 43;
+                if (x > 470 && x < 604) continue;
+                int top = 51 + foliage.nextInt(48);
+                int size = 142 + foliage.nextInt(51);
+                drawForestTree(g, x, top, size, i % 3 != 0);
             }
-            g.setColor(new Color(115, 188, 59)); g.fillRect(0, 143, W, 30);
-            g.setColor(new Color(75, 159, 48)); g.fillRect(0, 157, W, H - 157);
-            for (int i = 0; i < 210; i++) {
-                int x = (i * 173 + 23) % W, y = 153 + (i * 97) % 380;
-                g.setColor(i % 3 == 0 ? new Color(138, 199, 62) : i % 3 == 1 ? new Color(44, 129, 47) : new Color(97, 177, 53));
-                g.fillRect(x, y, 8 + i % 3 * 3, 5 + i % 2 * 3);
+            drawEchoPortal(g);
+            for (int i = 0; i < 58; i++) {
+                int x = (i * 193 + 31) % W;
+                int y = 188 + (i * 71) % 295;
+                int radius = 3 + i % 5;
+                g.setColor(i % 5 == 0 ? new Color(250, 245, 193, 194)
+                    : new Color(37 + i % 4 * 7, 118 + i % 5 * 7, 47, 142));
+                g.fillOval(x, y, radius * 2, Math.max(2, radius));
             }
-            int[] shadowX = {270, 688, 744, 853, 791, 842, 766, 806, 680, 615, 490, 386, 268, 185, 238, 99, 194};
-            int[] shadowY = {168, 168, 198, 204, 245, 278, 285, 322, 330, 370, 368, 324, 326, 291, 253, 238, 200};
-            g.setColor(new Color(27, 96, 43)); g.fillPolygon(shadowX, shadowY, shadowX.length);
-            int[] floorX = {270, 688, 741, 841, 785, 832, 759, 799, 675, 612, 492, 390, 270, 191, 242, 108, 199};
-            int[] floorY = {158, 158, 188, 194, 235, 268, 275, 312, 320, 360, 358, 314, 316, 281, 243, 228, 190};
-            g.setColor(new Color(219, 224, 199)); g.fillPolygon(floorX, floorY, floorX.length);
-            g.setColor(new Color(239, 239, 213));
-            g.fillRect(291, 178, 348, 21); g.fillRect(226, 209, 509, 20); g.fillRect(259, 241, 435, 18);
-            g.fillRect(325, 271, 311, 18); g.fillRect(385, 300, 191, 16);
-            g.setColor(new Color(177, 192, 160));
-            g.fillRect(322, 201, 57, 8); g.fillRect(574, 231, 57, 8); g.fillRect(243, 260, 53, 8);
-            g.fillRect(658, 278, 55, 8); g.fillRect(454, 322, 65, 8);
-            drawPixelBush(g, -18, 396, new Color(31, 103, 34));
-            drawPixelBush(g, 818, 389, new Color(35, 111, 38));
-            drawPixelBush(g, 36, 459, new Color(21, 90, 33));
-            drawPixelBush(g, 857, 450, new Color(24, 96, 36));
+
+            Ellipse2D arenaShadow = new Ellipse2D.Double(95, 207, 794, 225);
+            g.setColor(new Color(24, 78, 43, 102)); g.fill(arenaShadow);
+            Ellipse2D arena = new Ellipse2D.Double(92, 193, 794, 225);
+            g.setPaint(new GradientPaint(0, 197, new Color(241, 221, 160), 0, 418, new Color(198, 165, 101)));
+            g.fill(arena);
+            g.setColor(new Color(255, 245, 205, 130)); g.setStroke(new BasicStroke(3));
+            g.draw(new Ellipse2D.Double(112, 204, 754, 199));
+            for (int i = 0; i < 45; i++) {
+                int x = 126 + (i * 151) % 716, y = 220 + (i * 67) % 170;
+                g.setColor(i % 2 == 0 ? new Color(173, 138, 86, 42) : new Color(255, 244, 210, 75));
+                g.fill(new Ellipse2D.Double(x, y, 10 + i % 4 * 5, 2 + i % 3));
+            }
+
+            drawLeafyBush(g, -65, 381, 182, 150, new Color(31, 103, 52));
+            drawLeafyBush(g, 819, 377, 186, 154, new Color(28, 94, 49));
+            drawLeafyBush(g, -27, 464, 171, 123, new Color(20, 83, 44));
+            drawLeafyBush(g, 840, 455, 169, 130, new Color(22, 88, 45));
         }
 
-        private void drawPixelBush(Graphics2D g, int x, int y, Color dark) {
-            g.setColor(dark); g.fillRect(x, y, 154, 110);
-            g.setColor(new Color(41, 135, 39)); g.fillRect(x + 13, y - 20, 119, 88);
-            g.setColor(new Color(71, 171, 44)); g.fillRect(x + 31, y - 29, 77, 78);
-            g.setColor(new Color(108, 196, 49));
-            g.fillRect(x + 36, y - 22, 23, 13); g.fillRect(x + 79, y - 16, 18, 11); g.fillRect(x + 16, y + 20, 15, 12);
+        private void drawEchoPortal(Graphics2D g) {
+            int cx = 538;
+            g.setColor(new Color(39, 224, 229, 30)); g.fillOval(cx - 77, 50, 154, 147);
+            g.setColor(new Color(32, 197, 223, 58)); g.fillOval(cx - 58, 61, 116, 120);
+            g.setPaint(new GradientPaint(cx - 47, 67, new Color(175, 196, 173), cx + 49, 181, new Color(72, 105, 79)));
+            g.fillRoundRect(cx - 49, 68, 98, 120, 46, 46);
+            g.setColor(new Color(39, 73, 65)); g.fillRoundRect(cx - 37, 80, 74, 104, 37, 37);
+            g.setPaint(new GradientPaint(cx, 84, new Color(24, 157, 206), cx, 182, new Color(52, 238, 216)));
+            g.fillRoundRect(cx - 29, 88, 58, 91, 29, 29);
+            g.setColor(new Color(206, 255, 245, 210)); g.setStroke(new BasicStroke(3));
+            g.drawOval(cx - 18, 110, 36, 45); g.drawOval(cx - 10, 119, 20, 27);
+            g.setColor(new Color(230, 255, 236, 230)); g.fillOval(cx - 3, 129, 6, 6);
+            g.setColor(new Color(105, 75, 46)); g.fillRect(cx - 62, 173, 124, 5);
+            g.fillRect(cx - 55, 178, 8, 29); g.fillRect(cx + 47, 178, 8, 29);
+            g.setColor(new Color(100, 67, 39)); g.fillRoundRect(cx - 72, 151, 144, 31, 5, 5);
+            g.setColor(new Color(219, 189, 115)); g.drawRoundRect(cx - 72, 151, 144, 31, 5, 5);
+            g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 13));
+            g.setColor(new Color(251, 240, 193));
+            centered(g, "ECHO SITE  →", cx, 172);
+        }
+
+        private void drawForestTree(Graphics2D g, int x, int y, int size, boolean bright) {
+            int trunkW = Math.max(10, size / 9), trunkH = size / 2;
+            g.setPaint(new GradientPaint(x, y + size / 4, new Color(104, 75, 48), x + trunkW, y + trunkH, new Color(68, 69, 47)));
+            g.fillRoundRect(x + size / 2 - trunkW / 2, y + size / 3, trunkW, trunkH, trunkW / 2, trunkW / 2);
+            Color base = bright ? new Color(37, 112, 62) : new Color(28, 91, 59);
+            Color light = bright ? new Color(98, 165, 70) : new Color(61, 138, 69);
+            int[][] leaves = {{0, 28, 62}, {33, 1, 72}, {62, 26, 72}, {20, 51, 68}, {56, 63, 62}, {-13, 59, 55}};
+            for (int[] leaf : leaves) {
+                int lx = x + leaf[0] * size / 100, ly = y + leaf[1] * size / 100, diameter = leaf[2] * size / 100;
+                g.setPaint(new GradientPaint(lx, ly, light, lx + diameter, ly + diameter, base));
+                g.fillOval(lx, ly, diameter, diameter * 3 / 4);
+                g.setColor(new Color(151, 192, 91, 70));
+                g.drawArc(lx + diameter / 7, ly + diameter / 8, diameter / 2, diameter / 2, 205, 100);
+            }
+        }
+
+        private void drawLeafyBush(Graphics2D g, int x, int y, int w, int h, Color dark) {
+            g.setColor(new Color(18, 67, 39, 86)); g.fillOval(x + 7, y + h - 21, w - 2, 42);
+            g.setPaint(new GradientPaint(x, y, dark.brighter(), x, y + h, dark.darker()));
+            g.fillRoundRect(x + 12, y + 24, w - 24, h - 24, 58, 58);
+            Random leaves = new Random(x * 31L + y * 7L + w);
+            for (int i = 0; i < 24; i++) {
+                int lx = x + leaves.nextInt(Math.max(1, w - 36));
+                int ly = y + leaves.nextInt(Math.max(1, h - 38));
+                int d = 16 + leaves.nextInt(31);
+                Color tint = i % 3 == 0 ? new Color(105, 174, 77) : i % 3 == 1 ? new Color(52, 135, 67) : new Color(34, 112, 61);
+                g.setColor(new Color(tint.getRed(), tint.getGreen(), tint.getBlue(), 190));
+                g.fillOval(lx, ly, d, d * 3 / 4);
+                g.setColor(new Color(193, 216, 123, 110));
+                g.drawArc(lx + 4, ly + 3, d / 2, d / 3, 205, 95);
+            }
         }
 
         private void drawSelectionScene(Graphics2D g) {
@@ -1186,7 +2281,7 @@ public final class BattleDemo {
             Beast b = (Beast) playerChoice.getSelectedItem(); if (b == null) b = preview;
             drawCapsule(g, 286, 270, 1.0, 0, 0, false);
             g.setColor(new Color(29, 45, 62, 32)); g.fillOval(515, 359, 170, 28);
-            drawSprite(g, b, 526, 173, 155, 178, 1, 0, 0, 1f, false);
+            drawBeastFacing(g, b, 526, 173, 155, 178, 1, 0, 0, 1f, true);
             drawPixelSparkles(g, 730, 190, new Color(255, 215, 104), 13);
         }
 
@@ -1198,15 +2293,19 @@ public final class BattleDemo {
                 return;
             }
             drawBattlefield(g, true);
-            if (phase == Phase.SUMMONING) drawSummoning(g);
+            if (phase == Phase.THROWING_CAPSULE) drawTrainerCapsuleThrow(g);
+            else if (phase == Phase.SUMMONING) drawSummoning(g);
             else if (phase == Phase.ANIMATING) drawMoveEffect(g);
             else if (phase == Phase.RECALL_PLAYER) drawRecall(g, false);
             else if (phase == Phase.RECALL_ENEMY) drawRecall(g, true);
             else if (phase == Phase.COMMAND) drawCommandMenu(g);
             else if (phase == Phase.MOVE_SELECT) drawMoveMenu(g);
+            else if (phase == Phase.CAPSULE_SELECT) drawCapsulePicker(g);
+            else if (phase == Phase.ETHICS_QUESTION || phase == Phase.ETHICS_FEEDBACK) drawEthicsPanel(g);
             else if (phase == Phase.ATTUNE_REVEAL || phase == Phase.ATTUNE_INPUT) drawAttunementScene(g);
-            if (phase != Phase.COMMAND && phase != Phase.MOVE_SELECT && phase != Phase.ATTUNE_REVEAL
-                    && phase != Phase.ATTUNE_INPUT && !dialogDismissed) drawMessage(g);
+            if (phase != Phase.COMMAND && phase != Phase.MOVE_SELECT && phase != Phase.CAPSULE_SELECT && phase != Phase.ATTUNE_REVEAL
+                    && phase != Phase.ATTUNE_INPUT && phase != Phase.ETHICS_QUESTION && phase != Phase.ETHICS_FEEDBACK
+                    && !dialogDismissed) drawMessage(g);
         }
 
         private void drawBattlefield(Graphics2D g, boolean sprites) {
@@ -1215,29 +2314,134 @@ public final class BattleDemo {
             g.translate(shake, 0);
             drawStatus(g, player, 102, 27, false);
             drawStatus(g, enemy, 666, 27, true);
-            drawBackTrainer(g, 70, 212, new Color(39, 77, 176), new Color(225, 112, 52));
-            if (trainerBattle) drawBackTrainer(g, 850, 207, new Color(176, 54, 56), new Color(60, 72, 121));
+            drawPlayerTrainer(g, 70, 202);
+            if (trainerBattle) drawOpponentTrainer(g, 850, 202);
             else drawWildMark(g, 862, 218);
             g.setColor(new Color(35, 91, 42)); g.fillRect(235, 324, 150, 17); g.fillRect(584, 320, 156, 17);
             g.setColor(new Color(125, 175, 69)); g.fillRect(245, 322, 132, 7); g.fillRect(596, 318, 134, 7);
-            if (sprites && phase != Phase.RECALL_PLAYER) drawSprite(g, player, playerX(), 205, 108, 120, playerScaleX(), 0, 0, playerAlpha(), false);
-            if (sprites && phase != Phase.RECALL_ENEMY && !capturing) drawSprite(g, enemy, enemyX(), 197, 108, 120, enemyScaleX(), 0, 0, enemyAlpha(), true);
+            boolean playerBeastReleased = phase != Phase.THROWING_CAPSULE || recallAfterThrow;
+            if (sprites && phase != Phase.RECALL_PLAYER && playerBeastReleased) drawTypeAura(g, player, 321, 282);
+            if (sprites && phase != Phase.RECALL_ENEMY) drawTypeAura(g, enemy, 675, 280);
+            if (sprites && phase != Phase.RECALL_PLAYER && playerBeastReleased) drawBeastFacing(g, player, playerX(), 170, 150, 160, playerScaleX(), 0, 0, playerAlpha(), true);
+            if (sprites && phase != Phase.RECALL_ENEMY) drawBeastFacing(g, enemy, enemyX(), 166, 150, 160, enemyScaleX(), 0, 0, enemyAlpha(), false);
             if (player.buffTurns > 0 && phase != Phase.RECALL_PLAYER) drawStatusSigil(g, 312, 300, new Color(73, 199, 150), "POWER UP");
             if (enemy.weakenedTurns > 0 && phase != Phase.RECALL_ENEMY) drawStatusSigil(g, 684, 298, new Color(133, 94, 159), "GUARD DOWN");
             g.translate(-shake, 0);
         }
 
+        private void drawTypeAura(Graphics2D g, Beast beast, int cx, int cy) {
+            if (beast == null) return;
+            Color first = typeColor(beast.firstType);
+            Color second = typeColor(beast.secondType == null ? beast.firstType : beast.secondType);
+            Graphics2D aura = (Graphics2D) g.create();
+            aura.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.26f));
+            aura.setPaint(new RadialGradientPaint(new Point2D.Float(cx, cy + 10), 78f,
+                new float[] {0f, .55f, 1f}, new Color[] {new Color(first.getRed(), first.getGreen(), first.getBlue(), 138),
+                    new Color(second.getRed(), second.getGreen(), second.getBlue(), 65), new Color(255, 255, 255, 0)}));
+            aura.fill(new Ellipse2D.Double(cx - 78, cy - 68, 156, 156));
+            aura.dispose();
+            for (int i = 0; i < 12; i++) {
+                double angle = i * Math.PI / 6.0 + tick * 0.025;
+                int radiusX = 63 + (i % 3) * 5;
+                int radiusY = 48 + (i % 2) * 7;
+                int px = cx + (int) (Math.cos(angle) * radiusX);
+                int py = cy + (int) (Math.sin(angle) * radiusY);
+                Color color = (i + tick / 12) % 2 == 0 ? first : second;
+                int size = i % 4 == 0 ? 9 : 5;
+                g.setColor(new Color(color.getRed(), color.getGreen(), color.getBlue(), 185));
+                g.fillOval(px, py, size, size);
+                g.setColor(new Color(255, 255, 255, 180));
+                g.fillOval(px + size / 3, py + size / 3, Math.max(2, size / 3), Math.max(2, size / 3));
+            }
+        }
+
         private void drawBackTrainer(Graphics2D g, int x, int y, Color shirt, Color pack) {
-            int p = 5;
-            Color outline = new Color(25, 38, 34);
-            g.setColor(outline); g.fillRect(x + p, y, 5 * p, 2 * p); g.fillRect(x, y + p, 7 * p, 5 * p);
-            g.setColor(new Color(39, 31, 27)); g.fillRect(x + p, y + p, 5 * p, 4 * p);
-            g.setColor(new Color(239, 179, 126)); g.fillRect(x + 2 * p, y + 3 * p, 3 * p, 3 * p);
-            g.setColor(shirt); g.fillRect(x + p, y + 6 * p, 5 * p, 5 * p);
-            g.setColor(pack); g.fillRect(x + 4 * p, y + 6 * p, 3 * p, 4 * p);
-            g.setColor(outline); g.fillRect(x, y + 7 * p, p, 4 * p); g.fillRect(x + 6 * p, y + 7 * p, p, 4 * p);
-            g.setColor(new Color(42, 54, 79)); g.fillRect(x + p, y + 11 * p, 2 * p, 4 * p); g.fillRect(x + 4 * p, y + 11 * p, 2 * p, 4 * p);
-            g.setColor(new Color(230, 225, 196)); g.fillRect(x + p, y + 15 * p, 2 * p, p); g.fillRect(x + 4 * p, y + 15 * p, 2 * p, p);
+            Graphics2D guy = (Graphics2D) g.create();
+            guy.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            guy.setColor(new Color(22, 59, 53, 78)); guy.fillOval(x + 1, y + 111, 59, 13);
+            guy.setPaint(new GradientPaint(x + 5, y + 33, new Color(47, 68, 99), x + 58, y + 104, new Color(25, 39, 67)));
+            guy.fillRoundRect(x + 10, y + 69, 17, 44, 8, 8); guy.fillRoundRect(x + 34, y + 69, 17, 44, 8, 8);
+            guy.setColor(new Color(31, 47, 76)); guy.fillRoundRect(x + 7, y + 105, 23, 12, 8, 8); guy.fillRoundRect(x + 32, y + 105, 23, 12, 8, 8);
+            guy.setColor(new Color(224, 224, 210)); guy.fillRoundRect(x + 6, y + 111, 24, 8, 7, 7); guy.fillRoundRect(x + 31, y + 111, 24, 8, 7, 7);
+            guy.setPaint(new GradientPaint(x + 6, y + 36, shirt.brighter(), x + 56, y + 91, shirt.darker()));
+            guy.fillRoundRect(x + 6, y + 39, 51, 48, 18, 18);
+            guy.setColor(shirt.brighter()); guy.setStroke(new BasicStroke(3)); guy.drawLine(x + 31, y + 48, x + 31, y + 82);
+            guy.setColor(pack.darker()); guy.fillRoundRect(x + 3, y + 46, 18, 37, 8, 8);
+            guy.setColor(pack); guy.fillRoundRect(x + 4, y + 62, 20, 24, 7, 7);
+            guy.setColor(new Color(228, 182, 139)); guy.fillRoundRect(x + 22, y + 13, 26, 31, 10, 10);
+            guy.setColor(new Color(71, 46, 36));
+            guy.fill(new Arc2D.Double(x + 18, y + 5, 35, 35, 0, 180, Arc2D.PIE));
+            guy.fillRoundRect(x + 19, y + 20, 8, 17, 5, 5);
+            guy.setColor(new Color(198, 150, 116)); guy.fillOval(x + 18, y + 25, 7, 10);
+            guy.setColor(new Color(255, 236, 197, 160)); guy.drawArc(x + 25, y + 12, 21, 17, 20, 110);
+            guy.dispose();
+        }
+
+        private void drawOpponentTrainer(Graphics2D g, int x, int y) {
+            if (opponentTrainer.art == null) {
+                drawBackTrainer(g, x, y + 10, new Color(176, 54, 56), new Color(60, 72, 121));
+                return;
+            }
+            g.setColor(new Color(22, 62, 47, 66));
+            g.fillOval(x - 8, y + 133, 86, 13);
+            BeastIllustrations.draw(g, opponentTrainer.art, x - 14, y - 5, 98, 145, 1f, true);
+        }
+        private void drawPlayerTrainer(Graphics2D g, int x, int y) {
+            int throwFrame = trainerThrowFrame();
+            double lean = throwFrame >= 0 && throwFrame < 12
+                ? Math.sin(throwFrame / 12.0 * Math.PI) * 0.075 : 0.0;
+            Graphics2D trainer = (Graphics2D) g.create();
+            trainer.rotate(lean, x + 42, y + 134);
+            if (activeTrainer.art == null) {
+                drawBackTrainer(trainer, x, y + 10, new Color(39, 77, 176), new Color(225, 112, 52));
+            } else {
+                trainer.setColor(new Color(22, 62, 47, 66));
+                trainer.fillOval(x - 8, y + 133, 86, 13);
+                BeastIllustrations.draw(trainer, activeTrainer.art, x - 14, y - 5, 98, 145, 1f, false);
+            }
+            trainer.dispose();
+
+            if (throwFrame >= 0 && throwFrame < 8) {
+                int pulse = 7 + throwFrame % 3;
+                g.setColor(new Color(255, 246, 197, 190 - throwFrame * 16));
+                g.fillOval(x + 60 - pulse / 2, y + 66 - pulse / 2, pulse, pulse);
+                g.setColor(new Color(255, 255, 236, 220));
+                g.fillOval(x + 61, y + 66, 4, 4);
+            }
+        }
+
+        private int trainerThrowFrame() {
+            if (phase == Phase.THROWING_CAPSULE) return frameNo;
+            if (phase == Phase.ANIMATING && capturing && frameNo < 16) return frameNo;
+            return -1;
+        }
+
+        private void drawTrainerCapsuleThrow(Graphics2D g) {
+            drawCapsuleFlight(g, frameNo, 20, 313, 264, .58);
+        }
+
+        private void drawCapsuleFlight(Graphics2D g, int frame, int duration,
+                int targetX, int targetY, double scale) {
+            double t = Math.max(0.0, Math.min(1.0, frame / (double) duration));
+            int startX = 137, startY = 272;
+            int cx = (int) Math.round(startX + (targetX - startX) * t);
+            int cy = (int) Math.round(startY + (targetY - startY) * t - Math.sin(t * Math.PI) * 92);
+
+            for (int trail = 4; trail >= 1; trail--) {
+                double trailT = Math.max(0.0, t - trail * .055);
+                int trailX = (int) Math.round(startX + (targetX - startX) * trailT);
+                int trailY = (int) Math.round(startY + (targetY - startY) * trailT - Math.sin(trailT * Math.PI) * 92);
+                int size = Math.max(3, 9 - trail);
+                int alpha = 45 + (4 - trail) * 30;
+                Color glow = selectedCapsule.color;
+                g.setColor(new Color(glow.getRed(), glow.getGreen(), glow.getBlue(), alpha));
+                g.fillOval(trailX - size / 2, trailY - size / 2, size, size);
+            }
+
+            Graphics2D spinningCapsule = (Graphics2D) g.create();
+            spinningCapsule.rotate(t * Math.PI * 3, cx, cy);
+            drawCapsule(spinningCapsule, cx, cy, scale, 0, 0, false, selectedCapsule);
+            spinningCapsule.dispose();
         }
 
         private void drawWildMark(Graphics2D g, int x, int y) {
@@ -1246,16 +2450,16 @@ public final class BattleDemo {
         }
 
         private int playerX() {
-            int x = 259;
+            int x = 246;
             if (phase == Phase.ANIMATING && move != null && effectActor != enemy && frameNo < 9) x += frameNo * 8;
             if (phase == Phase.RECALL_PLAYER) x = (int) (259 + frameNo * 1.1);
             return x;
         }
         private int enemyX() {
-            int x = 630;
+            int x = 600;
             if (phase == Phase.ANIMATING && effectActor == enemy && frameNo < 9) x -= frameNo * 5;
             if (phase == Phase.RECALL_ENEMY) x = (int) (630 - frameNo * 0.7);
-            if (capturing && phase == Phase.ANIMATING && frameNo > 13) x = 630 + (frameNo - 13) * 8;
+
             return x;
         }
         private double playerScaleX() {
@@ -1273,14 +2477,27 @@ public final class BattleDemo {
         private float enemyAlpha() { return phase == Phase.RECALL_ENEMY ? Math.max(0f, 1f - frameNo / 29f) : capturing && phase == Phase.ANIMATING && frameNo > 15 ? Math.max(0f, 1f - (frameNo - 15) / 15f) : 1f; }
 
         private void drawStatus(Graphics2D g, Beast beast, int x, int y, boolean right) {
-            g.setColor(new Color(24, 31, 24)); g.fillRect(x, y, 195, 91);
-            g.setColor(new Color(248, 248, 232)); g.fillRect(x + 6, y + 6, 183, 79);
-            g.setColor(new Color(66, 75, 57)); g.fillRect(x + 10, y + 10, 175, 3);
-            int bx = x + 49, by = y + 59, bw = 126;
-            g.setColor(new Color(39, 47, 36)); g.drawRect(bx - 2, by - 2, bw + 4, 14);
-            g.setColor(new Color(200, 213, 177)); g.fillRect(bx, by, bw, 10);
-            g.setColor(beast.hp > 45 ? new Color(56, 163, 51) : beast.hp > 20 ? new Color(226, 173, 48) : new Color(207, 68, 48));
-            g.fillRect(bx, by, Math.max(0, bw * beast.hp / 100), 10);
+            g.setColor(new Color(12, 47, 42, 95)); g.fillRoundRect(x + 5, y + 7, 195, 110, 22, 22);
+            g.setPaint(new GradientPaint(x, y, new Color(31, 81, 65), x + 8, y + 110, new Color(18, 54, 46)));
+            g.fillRoundRect(x, y, 195, 110, 22, 22);
+            g.setColor(new Color(244, 231, 184)); g.fillRoundRect(x + 5, y + 5, 185, 100, 17, 17);
+            g.setPaint(new GradientPaint(x + 8, y + 8, new Color(255, 254, 237), x + 8, y + 103, new Color(238, 240, 211)));
+            g.fillRoundRect(x + 9, y + 9, 177, 92, 14, 14);
+            g.setColor(new Color(80, 112, 77, 150)); g.setStroke(new BasicStroke(1.4f));
+            g.drawRoundRect(x + 9, y + 9, 177, 92, 14, 14);
+            g.setColor(new Color(118, 157, 91));
+            g.drawArc(x + 13, y + 13, 18, 18, 90, 90); g.drawArc(x + 164, y + 13, 18, 18, 0, 90);
+            int bx = x + 49, by = y + 62, bw = 126;
+            g.setColor(new Color(30, 65, 48)); g.fillRoundRect(bx - 3, by - 3, bw + 6, 16, 9, 9);
+            g.setColor(new Color(194, 213, 173)); g.fillRoundRect(bx, by, bw, 10, 7, 7);
+            int hpPercent = beast.maxHp == 0 ? 0 : 100 * beast.hp / beast.maxHp;
+            Color hpColor = hpPercent > 45 ? new Color(54, 170, 74) : hpPercent > 20 ? new Color(222, 169, 52) : new Color(203, 74, 59);
+            g.setPaint(new GradientPaint(bx, by, hpColor.brighter(), bx, by + 10, hpColor.darker()));
+            g.fillRoundRect(bx, by, Math.max(0, bw * beast.hp / beast.maxHp), 10, 7, 7);
+            int exp = SAVE.nextLevelXp(beast);
+            g.setColor(new Color(126, 143, 113)); g.fillRoundRect(bx, y + 89, bw, 5, 5, 5);
+            g.setPaint(new GradientPaint(bx, y + 88, new Color(147, 205, 113), bx, y + 95, new Color(62, 150, 83)));
+            g.fillRoundRect(bx, y + 89, bw * exp / 100, 5, 5, 5);
         }
 
         private void drawCommandMenu(Graphics2D g) {
@@ -1369,12 +2586,74 @@ public final class BattleDemo {
             if (menuFocus == 5) drawMenuArrow(g, 29, 508);
         }
 
+        private void drawCapsulePicker(Graphics2D g) {
+            drawPixelPanel(g, 32, 350, 896, 178);
+            CapsuleType[] capsules = CapsuleType.values();
+            for (int i = 0; i < capsules.length; i++) {
+                int col = i % 4;
+                int row = i / 4;
+                int x = 48 + col * 216;
+                int y = 390 + row * 62;
+                g.setColor(menuFocus == i ? new Color(220, 240, 221) : new Color(247, 247, 226));
+                g.fillRoundRect(x, y, 208, 54, 12, 12);
+                g.setColor(menuFocus == i ? capsules[i].color.darker() : new Color(129, 145, 119));
+                g.setStroke(new BasicStroke(menuFocus == i ? 2.2f : 1.2f));
+                g.drawRoundRect(x, y, 208, 54, 12, 12);
+                drawCapsule(g, x + 24, y + 27, 0.46, 0, 0, false, capsules[i]);
+            }
+        }
+
+        private void drawCapsulePickerText(Graphics2D g) {
+            g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 16));
+            g.setColor(new Color(35, 100, 70));
+            g.drawString("CHOOSE A CYLINDER CAPSULE", 61, 378);
+            g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 10));
+            g.setColor(MUTED);
+            rightText(g, "PRESS 1-8 TO THROW  ·  ESC TO RETURN", 900, 378);
+
+            CapsuleType[] capsules = CapsuleType.values();
+            for (int i = 0; i < capsules.length; i++) {
+                CapsuleType capsule = capsules[i];
+                int col = i % 4;
+                int row = i / 4;
+                int x = 48 + col * 216;
+                int y = 390 + row * 62;
+                g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 13));
+                g.setColor(INK);
+                g.drawString((i + 1) + ". " + capsule.label, x + 46, y + 20);
+                String affinity;
+                if (capsule == CapsuleType.FIELD) affinity = "standard odds";
+                else if (capsule == CapsuleType.PRISM) affinity = "any type +28%";
+                else if (capsule.matches(enemy)) {
+                    affinity = "MATCH +" + (int) Math.round(capsule.bonusAgainst(enemy) * 100)
+                        + "% · " + capsule.affinityText.toUpperCase(Locale.ROOT).replace(" / ", "/");
+                } else {
+                    affinity = "BASE +" + (int) Math.round(capsule.universalBonus * 100)
+                        + "% · " + capsule.affinityText.toUpperCase(Locale.ROOT).replace(" / ", "/");
+                }
+                g.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 8));
+                g.setColor(new Color(71, 91, 70));
+                g.drawString(ellipsize(g, affinity, 151), x + 46, y + 36);
+                g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 11));
+                g.setColor(capsule.color.darker());
+                rightText(g, (int) Math.round(captureChance(capsule) * 100) + "%", x + 198, y + 49);
+            }
+        }
+
         private void drawPixelPanel(Graphics2D g, int x, int y, int w, int h) {
-            g.setColor(new Color(22, 28, 23)); g.fillRect(x, y, w, h);
-            g.setColor(new Color(252, 251, 236)); g.fillRect(x + 7, y + 7, w - 14, h - 14);
-            g.setColor(new Color(74, 82, 65));
-            g.fillRect(x + 11, y + 11, w - 22, 3);
-            g.fillRect(x + 11, y + h - 14, w - 22, 3);
+            g.setColor(new Color(10, 42, 38, 105)); g.fillRoundRect(x + 4, y + 6, w, h, 24, 24);
+            g.setPaint(new GradientPaint(x, y, new Color(18, 71, 57), x, y + h, new Color(12, 50, 46)));
+            g.fillRoundRect(x, y, w, h, 24, 24);
+            g.setColor(new Color(247, 236, 195)); g.fillRoundRect(x + 5, y + 5, w - 10, h - 10, 19, 19);
+            g.setPaint(new GradientPaint(x, y + 9, new Color(255, 254, 239), x, y + h - 9, new Color(241, 244, 222)));
+            g.fillRoundRect(x + 10, y + 10, w - 20, h - 20, 14, 14);
+            g.setColor(new Color(79, 115, 79)); g.setStroke(new BasicStroke(1.5f));
+            g.drawRoundRect(x + 10, y + 10, w - 20, h - 20, 14, 14);
+            g.setColor(new Color(117, 157, 100)); g.setStroke(new BasicStroke(2));
+            g.drawArc(x + 12, y + 12, 23, 23, 90, 90);
+            g.drawArc(x + w - 35, y + 12, 23, 23, 0, 90);
+            g.drawArc(x + 12, y + h - 35, 23, 23, 180, 90);
+            g.drawArc(x + w - 35, y + h - 35, 23, 23, 270, 90);
         }
 
         private void drawMenuArrow(Graphics2D g, int x, int y) {
@@ -1390,15 +2669,20 @@ public final class BattleDemo {
                 drawPixelSparkles(g, 368, 250, new Color(250, 221, 126), 12 + f / 2);
                 float alpha = Math.min(1f, (f - 5) / 17f);
                 double size = Math.min(1, (f - 5) / 17.0);
-                drawSprite(g, player, (int) (259 + (1 - size) * 40), (int) (205 + (1 - size) * 35), (int) (108 * size), (int) (120 * size), 1, 0, 0, alpha, false);
+                drawBeastFacing(g, player, (int) (259 + (1 - size) * 40), (int) (205 + (1 - size) * 35), (int) (108 * size), (int) (120 * size), 1, 0, 0, alpha, true);
             }
             g.setColor(new Color(255, 255, 255, 210)); g.fillRoundRect(357, 139, 240, 47, 20, 20);
         }
 
         private void drawMoveEffect(Graphics2D g) {
             if (capturing) {
-                if (frameNo < 15) drawCapsule(g, 170 + frameNo * 28, 245 - (int) (Math.sin(frameNo / 2.0) * 28), 0.65, 0, 0, false);
-                else { drawCapsule(g, 585, 266, Math.max(.18, .75 - (frameNo - 15) / 45.0), frameNo % 8 < 4 ? 2 : 0, 0, false); drawPixelSparkles(g, 680, 266, new Color(255, 225, 130), 10); }
+                if (frameNo < 15) {
+                    drawCapsuleFlight(g, frameNo, 15, 675, 270, .62);
+                } else {
+                    drawCapsule(g, 675, 270, Math.max(.18, .75 - (frameNo - 15) / 45.0),
+                        frameNo % 8 < 4 ? 2 : 0, 0, false);
+                    drawPixelSparkles(g, 675, 270, new Color(255, 225, 130), 10);
+                }
                 return;
             }
             if (move == null) {
@@ -1458,7 +2742,8 @@ public final class BattleDemo {
                 int x = cx + (int) (Math.cos(angle) * distance);
                 int y = cy + (int) (Math.sin(angle) * distance);
                 g.setColor((i + frame / 2) % 3 == 0 ? Color.WHITE : color);
-                g.fillRect(x, y, Math.max(2, 7 - frame / 5), Math.max(2, 7 - frame / 5));
+                int particle = Math.max(3, 8 - frame / 4);
+                g.fill(new Ellipse2D.Double(x - particle / 2.0, y - particle / 2.0, particle, particle));
             }
             if (frame < 8) drawCapsule(g, cx, cy, .35, frame % 2 == 0 ? 3 : 0, 0, false);
         }
@@ -1485,7 +2770,8 @@ public final class BattleDemo {
             for (int i = 0; i < 7; i++) {
                 double a = (tick * .16 + i * Math.PI / 3.5);
                 int px = x + (int) (Math.cos(a) * 67), py = y + (int) (Math.sin(a) * 37);
-                g.setColor(col); g.fillRect(px - 3, py - 3, 7, 7);
+                g.setColor(new Color(col.getRed(), col.getGreen(), col.getBlue(), 210));
+                g.fill(new Ellipse2D.Double(px - 3.5, py - 3.5, 7, 7));
             }
         }
 
@@ -1499,7 +2785,8 @@ public final class BattleDemo {
                 int px = x + (int) (Math.cos(ang) * r * Math.max(.12, 1 - frameNo / 37.0));
                 int py = y + (int) (Math.sin(ang) * r * Math.max(.12, 1 - frameNo / 37.0));
                 int alpha = Math.max(15, 210 - frameNo * 6);
-                g.setColor(new Color(c.getRed(), c.getGreen(), c.getBlue(), alpha)); g.fillRect(px, py, 5, 5);
+                g.setColor(new Color(c.getRed(), c.getGreen(), c.getBlue(), alpha));
+                g.fill(new Ellipse2D.Double(px, py, 5, 5));
             }
         }
 
@@ -1508,30 +2795,71 @@ public final class BattleDemo {
         }
 
         private void drawCapsule(Graphics2D g, int cx, int cy, double scale, int opening, int lift, boolean large) {
-            int w = large ? 94 : 65, h = large ? 112 : 77;
-            w = (int) (w * scale); h = (int) (h * scale);
-            int x = cx - w / 2, y = cy - h / 2;
+            drawCapsule(g, cx, cy, scale, opening, lift, large, selectedCapsule);
+        }
+
+        private void drawCapsule(Graphics2D g, int cx, int cy, double scale, int opening, int lift,
+                boolean large, CapsuleType capsuleType) {
+            int w = Math.max(1, (int) ((large ? 62 : 42) * scale));
+            int h = Math.max(1, (int) ((large ? 112 : 76) * scale));
+            int x = cx - w / 2;
+            int y = cy - h / 2;
             int split = y + h / 2;
-            int topLift = Math.max(0, opening * (large ? 3 : 2));
-            g.setColor(new Color(26, 39, 55)); g.fillRoundRect(x - 3, y - 3 - topLift, w + 6, h + 6, w, w);
-            g.setColor(new Color(239, 99, 92)); g.fillRoundRect(x, y - topLift, w, h / 2 + 8, w, w);
-            g.setColor(new Color(247, 249, 250)); g.fillRoundRect(x, split + lift, w, h / 2, w, w);
-            g.setColor(new Color(31, 42, 55)); g.fillRect(x, split + lift, w, Math.max(4, h / 11));
-            g.setColor(new Color(255, 255, 255)); g.fillOval(cx - Math.max(7, w / 7), split - Math.max(7, h / 14), Math.max(14, w / 3), Math.max(14, h / 3));
-            g.setColor(new Color(31, 42, 55)); g.setStroke(new BasicStroke(Math.max(2, w / 28f)));
-            g.drawOval(cx - Math.max(7, w / 7), split - Math.max(7, h / 14), Math.max(14, w / 3), Math.max(14, h / 3));
-            if (opening > 0) { g.setColor(new Color(255, 225, 141, 210)); g.fillOval(cx - w / 3, split - h / 12, 2 * w / 3, Math.max(8, h / 6)); }
+            int radius = Math.max(8, w * 3 / 4);
+            int topLift = Math.max(0, opening * (large ? 2 : 1));
+            Color shell = capsuleType.color;
+            Color dark = new Color(26, 51, 48);
+            Color base = new Color(242, 237, 211);
+
+            g.setColor(new Color(20, 65, 45, 85));
+            g.fillOval(x - w / 5, y + h - 3, w + 2 * (w / 5), Math.max(6, h / 7));
+            g.setColor(dark);
+            g.fillRoundRect(x - 3, y - 3 - topLift, w + 6, h + 6, radius + 5, radius + 5);
+            g.setColor(base.darker());
+            g.fillRoundRect(x, split + lift - 1, w, h / 2 + 1, radius, radius);
+            g.setColor(base);
+            g.fillRect(x + 2, split + lift, Math.max(1, w - 4), Math.max(1, h / 2 - radius / 2));
+            g.setColor(shell.darker());
+            g.fillRoundRect(x, y - topLift, w, h / 2 + 7, radius, radius);
+            g.setColor(shell);
+            g.fillRect(x + 2, y + radius / 2 - topLift, Math.max(1, w - 4), Math.max(1, h / 2 + 6 - radius / 2));
+            g.setColor(new Color(255, 255, 255, 110));
+            g.fillRoundRect(x + Math.max(4, w / 7), y + 8 - topLift, Math.max(2, w / 8), Math.max(1, h - 20), 8, 8);
+            g.setColor(new Color(25, 48, 46));
+            g.fillRoundRect(x - 1, split - 3 + lift, w + 2, Math.max(5, h / 11), 7, 7);
+            g.setColor(new Color(225, 230, 206));
+            g.fillRect(x + 2, split - 1 + lift, Math.max(1, w - 4), Math.max(1, h / 22));
+            g.setColor(dark);
+            g.setStroke(new BasicStroke(Math.max(1.4f, w / 24f)));
+            g.drawRoundRect(x, y - topLift, w, h, radius, radius);
+
+            int emblem = Math.max(8, w / 3);
+            int emblemY = y + h / 3 - emblem / 2 - topLift;
+            g.setColor(new Color(244, 242, 216));
+            g.fillOval(cx - emblem / 2, emblemY, emblem, emblem);
+            g.setColor(dark);
+            g.drawOval(cx - emblem / 2, emblemY, emblem, emblem);
+            g.setColor(shell.darker());
+            g.fillOval(cx - Math.max(2, emblem / 5), emblemY + emblem / 3,
+                Math.max(4, emblem * 2 / 5), Math.max(4, emblem / 3));
+            if (opening > 0) {
+                g.setColor(new Color(255, 225, 141, 220));
+                g.fillOval(cx - w / 3, split - h / 12 + lift, Math.max(1, 2 * w / 3), Math.max(4, h / 8));
+            }
         }
 
         private void drawSprite(Graphics2D g, Beast beast, int x, int y, int w, int h, double scaleX, int dx, int dy, float alpha, boolean flip) {
-            if (beast == null || beast.sprite == null || alpha <= 0) return;
+            if (beast == null || alpha <= 0) return;
             int dw = Math.max(1, (int) (w * scaleX)), dh = h;
             int drawX = x + dx + (w - dw) / 2;
-            Graphics2D copy = (Graphics2D) g.create();
-            copy.setComposite(java.awt.AlphaComposite.getInstance(java.awt.AlphaComposite.SRC_OVER, Math.max(0, Math.min(1, alpha))));
-            if (flip) { copy.drawImage(beast.sprite, drawX + dw, y + dy, -dw, dh, null); }
-            else copy.drawImage(beast.sprite, drawX, y + dy, dw, dh, null);
-            copy.dispose();
+            BeastIllustrations.draw(g, beast.sprite, drawX, y + dy, dw, dh, alpha, flip);
+        }
+
+        private void drawBeastFacing(Graphics2D g, Beast beast, int x, int y, int w, int h,
+                double scaleX, int dx, int dy, float alpha, boolean faceRight) {
+            if (beast == null) return;
+            boolean flip = beast.facesRightInSource != faceRight;
+            drawSprite(g, beast, x, y, w, h, scaleX, dx, dy, alpha, flip);
         }
 
         private void drawStatusSigil(Graphics2D g, int x, int y, Color color, String label) {
@@ -1565,7 +2893,11 @@ public final class BattleDemo {
 
         private void drawTrail(Graphics2D g, String type, int x, int y, int frame) {
             Color c = typeColor(type);
-            for (int i = 0; i < 4; i++) { int s = 4 + i * 2; g.setColor(new Color(c.getRed(), c.getGreen(), c.getBlue(), 140 - i * 25)); g.fillRect(x - i * 10, y + (i % 2 == 0 ? -7 : 7), s, s); }
+            for (int i = 0; i < 5; i++) {
+                int s = 5 + i * 2;
+                g.setColor(new Color(c.getRed(), c.getGreen(), c.getBlue(), Math.max(25, 150 - i * 25)));
+                g.fill(new Ellipse2D.Double(x - i * 11 - s / 2.0, y + (i % 2 == 0 ? -7 : 7) - s / 2.0, s, s));
+            }
         }
 
         private void drawBurst(Graphics2D g, int x, int y, Color c, int frame) {
@@ -1574,30 +2906,41 @@ public final class BattleDemo {
             for (int i = 0; i < 8; i++) {
                 double a = i * Math.PI / 4 + frame * .18;
                 int px = x + (int) (Math.cos(a) * radius), py = y + (int) (Math.sin(a) * radius);
-                g.fillRect(px - 4, py - 4, 8, 8);
+                g.fill(new Ellipse2D.Double(px - 4, py - 4, 8, 8));
             }
-            g.fillRect(x - Math.max(2, 18 - frame), y - Math.max(2, 18 - frame), Math.max(4, (18 - frame) * 2), Math.max(4, (18 - frame) * 2));
+            int core = Math.max(5, (18 - frame) * 2);
+            g.fill(new Ellipse2D.Double(x - core / 2.0, y - core / 2.0, core, core));
         }
 
         private void drawPixelSparkles(Graphics2D g, int x, int y, Color color, int count) {
             for (int i = 0; i < Math.min(count, 24); i++) {
                 int px = x + (int) (Math.sin(i * 3.7 + tick * .04) * (22 + i % 5 * 9));
                 int py = y + (int) (Math.cos(i * 2.3 + tick * .05) * (17 + i % 4 * 8));
-                g.setColor((i + tick / 8) % 3 == 0 ? Color.WHITE : color);
-                int size = i % 4 == 0 ? 7 : 4;
-                g.fillRect(px, py, size, size);
+                int size = i % 4 == 0 ? 8 : 5;
+                Color glow = (i + tick / 8) % 3 == 0 ? Color.WHITE : color;
+                g.setColor(new Color(glow.getRed(), glow.getGreen(), glow.getBlue(), 48));
+                g.fill(new Ellipse2D.Double(px - size, py - size, size * 2.0, size * 2.0));
+                g.setColor(glow);
+                g.fill(new Ellipse2D.Double(px - size / 2.0, py - size / 2.0, size, size));
+                if (i % 3 == 0) {
+                    g.setStroke(new BasicStroke(1.5f));
+                    g.drawLine(px - size, py, px + size, py);
+                    g.drawLine(px, py - size, px, py + size);
+                }
             }
         }
 
         private void drawPixelStar(Graphics2D g, int x, int y, int size, Color c) {
-            g.setColor(c); g.fillRect(x - size / 2, y - size / 6, size, size / 3); g.fillRect(x - size / 6, y - size / 2, size / 3, size);
-            g.fillRect(x - size / 3, y - size / 3, size / 5, size / 5); g.fillRect(x + size / 5, y - size / 3, size / 5, size / 5);
+            Path2D star = new Path2D.Double();
+            star.moveTo(x, y - size / 2.0); star.lineTo(x + size * .17, y - size * .16);
+            star.lineTo(x + size / 2.0, y); star.lineTo(x + size * .17, y + size * .16);
+            star.lineTo(x, y + size / 2.0); star.lineTo(x - size * .17, y + size * .16);
+            star.lineTo(x - size / 2.0, y); star.lineTo(x - size * .17, y - size * .16); star.closePath();
+            g.setColor(new Color(c.getRed(), c.getGreen(), c.getBlue(), 60));
+            g.fill(new Ellipse2D.Double(x - size, y - size, size * 2.0, size * 2.0));
+            g.setColor(c); g.fill(star);
         }
 
-        private void drawPixelPlant(Graphics2D g, int x, int y, Color bloom) {
-            g.setColor(new Color(47, 108, 76)); g.fillRect(x, y - 22, 5, 23); g.fillRect(x - 9, y - 11, 10, 5); g.fillRect(x + 4, y - 16, 10, 5);
-            g.setColor(bloom); g.fillRect(x - 4, y - 31, 13, 13); g.setColor(new Color(242, 194, 92)); g.fillRect(x, y - 27, 5, 5);
-        }
     }
 
     private static Color typeColor(String type) {

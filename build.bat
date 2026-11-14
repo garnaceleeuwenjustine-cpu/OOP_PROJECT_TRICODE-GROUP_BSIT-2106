@@ -10,6 +10,7 @@ if defined JDK_BIN (
   set "JAVAC_EXE=javac"
   set "JAVA_EXE=java"
 )
-if not exist bin mkdir bin
-"%JAVAC_EXE%" -encoding UTF-8 -d bin -sourcepath src src\Main.java
+if not exist out mkdir out
+"%JAVAC_EXE%" --release 25 -encoding UTF-8 -d out src\Main.java src\echoesofluma\BattleDemo.java src\echoesofluma\BeastIllustrations.java src\echoesofluma\BeastAnimator.java src\echoesofluma\BeastDemo.java
 exit /b %ERRORLEVEL%
+
