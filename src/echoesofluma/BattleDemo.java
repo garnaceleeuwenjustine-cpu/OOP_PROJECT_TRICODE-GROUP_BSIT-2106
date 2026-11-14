@@ -109,30 +109,37 @@ public final class BattleDemo {
     }
 
     private enum CapsuleType {
-        FIELD("Field", new Color(222, 114, 67), "Standard odds", 0.00, 0.00),
-        GROVE("Grove", new Color(76, 166, 88), "Grass / Bug", 0.02, 0.12, "Grass", "Bug"),
-        TIDE("Tide", new Color(50, 148, 205), "Water / Ice", 0.04, 0.12, "Water", "Ice"),
-        EMBER("Ember", new Color(224, 93, 55), "Fire / Dragon", 0.06, 0.12, "Fire", "Dragon"),
-        GLOAM("Gloam", new Color(131, 91, 176), "Dark / Ghost / Poison", 0.08, 0.12, "Dark", "Ghost", "Poison"),
-        STONE("Stone", new Color(137, 132, 111), "Rock / Ground / Steel", 0.10, 0.12, "Rock", "Ground", "Steel"),
-        SKY("Sky", new Color(80, 179, 184), "Flying / Fairy / Psychic", 0.12, 0.12, "Flying", "Fairy", "Psychic"),
-        PRISM("Prism", new Color(200, 165, 73), "Any type", 0.28, 0.00);
+        FIELD("Field", new Color(222, 114, 67), "Standard odds", 0.00, 0.00, 0),
+        GROVE("Grove", new Color(76, 166, 88), "Grass / Bug", 0.02, 0.12, 2, "Grass", "Bug"),
+        TIDE("Tide", new Color(50, 148, 205), "Water / Ice", 0.04, 0.12, 4, "Water", "Ice"),
+        EMBER("Ember", new Color(224, 93, 55), "Fire / Dragon", 0.06, 0.12, 6, "Fire", "Dragon"),
+        GLOAM("Gloam", new Color(131, 91, 176), "Dark / Ghost / Poison", 0.08, 0.12, 8, "Dark", "Ghost", "Poison"),
+        STONE("Stone", new Color(137, 132, 111), "Rock / Ground / Steel", 0.10, 0.12, 10, "Rock", "Ground", "Steel"),
+        SKY("Sky", new Color(80, 179, 184), "Flying / Fairy / Psychic", 0.12, 0.12, 12, "Flying", "Fairy", "Psychic"),
+        PRISM("Prism", new Color(200, 165, 73), "Any type", 0.28, 0.00, 15);
 
         final String label;
         final Color color;
         final String affinityText;
         final double universalBonus;
         final double matchingBonus;
+        final int caughtRequired;
         final Set<String> affinities;
 
-        CapsuleType(String label, Color color, String affinityText, double universalBonus, double matchingBonus, String... affinities) {
+        CapsuleType(String label, Color color, String affinityText, double universalBonus, double matchingBonus,
+                int caughtRequired, String... affinities) {
             this.label = label;
             this.color = color;
             this.affinityText = affinityText;
             this.universalBonus = universalBonus;
             this.matchingBonus = matchingBonus;
+            this.caughtRequired = caughtRequired;
             this.affinities = Set.of(affinities);
         }
+
+        boolean isUnlocked() { return SAVE.caughtCount() >= caughtRequired; }
+
+        String unlockRequirement() { return "CATCH " + caughtRequired + " BEASTS"; }
 
         double bonusAgainst(Beast beast) {
             if (beast == null) return universalBonus;
@@ -597,6 +604,11 @@ public final class BattleDemo {
 
         int level(Beast beast) { return 1 + experience[indexOf(beast)] / 100; }
         int nextLevelXp(Beast beast) { return experience[indexOf(beast)] % 100; }
+        int caughtCount() {
+            int count = 0;
+            for (boolean isCaught : caught) if (isCaught) count++;
+            return count;
+        }
         void addExperience(Beast beast, int amount) {
             int i = indexOf(beast);
             experience[i] += Math.max(0, amount);
@@ -1280,6 +1292,7 @@ public final class BattleDemo {
         arena.phase = Phase.CAPSULE_SELECT;
         arena.frameNo = 0;
         arena.menuFocus = 0;
+        arena.capsulePickerNotice = "";
         arena.message = "Choose a cylindrical capsule. Its type changes the catch chance.";
         setActionsEnabled(false);
         arena.requestFocusInWindow();
@@ -1288,15 +1301,22 @@ public final class BattleDemo {
 
     private void throwCapsule(CapsuleType capsuleType) {
         if (arena.phase != Phase.CAPSULE_SELECT || !arena.canCapture()) return;
+        if (!capsuleType.isUnlocked()) {
+            arena.capsulePickerNotice = capsuleType.unlockRequirement() + " TO UNLOCK "
+                + capsuleType.label.toUpperCase(Locale.ROOT);
+            arena.repaint();
+            return;
+        }
+        arena.capsulePickerNotice = "";
         arena.selectedCapsule = capsuleType;
         arena.phase = Phase.ANIMATING; arena.frameNo = 0; arena.capturing = true;
         double chance = arena.captureChance(capsuleType);
+        arena.captureChanceAtThrow = (int) Math.round(chance * 100);
         arena.captureSuccess = arena.random.nextDouble() < chance;
         arena.attunementBonus = false;
         arena.captureBreakEffect = false;
         arena.enemyTurnPendingAfterCapture = false;
-        arena.message = String.format(Locale.ROOT, "%s throws a %s capsule · %d%% catch chance.",
-            activeTrainer.title, capsuleType.label, (int) Math.round(chance * 100));
+        arena.message = "{C:#2C765B}{PLAYER}{/C} throws a {C:#B56839}{CAPSULE}{/C} capsule · {CHANCE}% catch chance.";
         setActionsEnabled(false);
         arena.requestFocusInWindow();
         arena.repaint();
@@ -1356,6 +1376,8 @@ public final class BattleDemo {
         int frameNo;
         int tick;
         int menuFocus;
+        int captureChanceAtThrow;
+        String capsulePickerNotice = "";
         private String lastDialogText = "";
         private Phase lastDialogPhase;
         private int visibleDialogChars;
@@ -1388,6 +1410,7 @@ public final class BattleDemo {
                             throwCapsule(CapsuleType.values()[key - KeyEvent.VK_NUMPAD1]);
                         } else if (key == KeyEvent.VK_ESCAPE) {
                             phase = Phase.COMMAND;
+                            capsulePickerNotice = "";
                             setActionsEnabled(true);
                             repaint();
                         }
@@ -1420,8 +1443,17 @@ public final class BattleDemo {
         }
 
         private String dialogText() {
-            if (phase == Phase.SUMMONING && player != null) return "Capsule opens. Releasing " + player.name + "...";
-            return message == null ? "" : message;
+            String text = phase == Phase.SUMMONING && player != null
+                ? "Capsule opens. Releasing {ALLY}..." : (message == null ? "" : message);
+            return text.replace("{PLAYER}", activeTrainer.title)
+                .replace("{ALLY}", player == null ? "your beast" : player.name)
+                .replace("{BEAST}", enemy == null ? "the wild beast" : enemy.name)
+                .replace("{MOVE}", move == null ? "a move" : move.name)
+                .replace("{LEVEL}", player == null ? "1" : Integer.toString(player.level))
+                .replace("{TYPE}", player == null ? "BEAST" : player.types())
+                .replace("{XP}", player == null ? "0" : Integer.toString(SAVE.nextLevelXp(player)))
+                .replace("{CAPSULE}", selectedCapsule.label)
+                .replace("{CHANCE}", Integer.toString(captureChanceAtThrow));
         }
 
         private void syncDialog() {
@@ -1638,6 +1670,9 @@ public final class BattleDemo {
                 int col = Math.min(3, Math.max(0, (point[0] - 48) / 216));
                 int row = Math.min(1, Math.max(0, (point[1] - 390) / 62));
                 menuFocus = row * 4 + col;
+                CapsuleType focused = CapsuleType.values()[menuFocus];
+                capsulePickerNotice = focused.isUnlocked() ? ""
+                    : focused.unlockRequirement() + " TO UNLOCK " + focused.label.toUpperCase(Locale.ROOT);
                 repaint();
             } else if (phase == Phase.COMMAND && point[0] >= 20 && point[0] <= 430 && point[1] >= 396 && point[1] <= 526) {
                 int col = Math.min(2, Math.max(0, (point[0] - 20) / 137));
@@ -1669,6 +1704,13 @@ public final class BattleDemo {
                 int row = Math.min(1, Math.max(0, (y - 390) / 62));
                 int choice = row * 4 + col;
                 menuFocus = choice;
+                CapsuleType capsule = CapsuleType.values()[choice];
+                if (!capsule.isUnlocked()) {
+                    capsulePickerNotice = capsule.unlockRequirement() + " TO UNLOCK "
+                        + capsule.label.toUpperCase(Locale.ROOT);
+                    repaint();
+                    return;
+                }
                 throwCapsule(CapsuleType.values()[choice]);
             } else if (phase == Phase.COMMAND && x >= 20 && x <= 430 && y >= 396 && y <= 526) {
                 int col = Math.min(2, Math.max(0, (x - 20) / 137));
@@ -2047,11 +2089,7 @@ public final class BattleDemo {
         private void drawDialogText(Graphics2D g) {
             syncDialog();
             String text = lastDialogText.substring(0, Math.min(visibleDialogChars, lastDialogText.length()));
-            List<String> lines = wrapText(g, text, 848);
-            g.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 18));
-            g.setColor(new Color(27, 37, 53));
-            int[] baselines = {481, 505};
-            for (int i = 0; i < Math.min(2, lines.size()); i++) g.drawString(lines.get(i), 42, baselines[i]);
+            PixelBitmapFont.drawWrapped(g, text, 42, 478, 850, 3, 2, new Color(27, 37, 53));
             if (visibleDialogChars >= lastDialogText.length()) {
                 g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 11));
                 rightText(g, "SPACE / CLICK", 928, 469);
@@ -2594,10 +2632,13 @@ public final class BattleDemo {
                 int row = i / 4;
                 int x = 48 + col * 216;
                 int y = 390 + row * 62;
-                g.setColor(menuFocus == i ? new Color(220, 240, 221) : new Color(247, 247, 226));
+                boolean unlocked = capsules[i].isUnlocked();
+                g.setColor(!unlocked ? new Color(224, 225, 215)
+                    : menuFocus == i ? new Color(220, 240, 221) : new Color(247, 247, 226));
                 g.fillRoundRect(x, y, 208, 54, 12, 12);
-                g.setColor(menuFocus == i ? capsules[i].color.darker() : new Color(129, 145, 119));
-                g.setStroke(new BasicStroke(menuFocus == i ? 2.2f : 1.2f));
+                g.setColor(!unlocked ? new Color(143, 147, 136)
+                    : menuFocus == i ? capsules[i].color.darker() : new Color(129, 145, 119));
+                g.setStroke(new BasicStroke(unlocked && menuFocus == i ? 2.2f : 1.2f));
                 g.drawRoundRect(x, y, 208, 54, 12, 12);
                 drawCapsule(g, x + 24, y + 27, 0.46, 0, 0, false, capsules[i]);
             }
@@ -2608,8 +2649,10 @@ public final class BattleDemo {
             g.setColor(new Color(35, 100, 70));
             g.drawString("CHOOSE A CYLINDER CAPSULE", 61, 378);
             g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 10));
-            g.setColor(MUTED);
-            rightText(g, "PRESS 1-8 TO THROW  ·  ESC TO RETURN", 900, 378);
+            String instruction = capsulePickerNotice.isEmpty()
+                ? "PRESS 1-8 TO THROW  ·  ESC TO RETURN" : capsulePickerNotice;
+            g.setColor(capsulePickerNotice.isEmpty() ? MUTED : new Color(153, 82, 43));
+            rightText(g, instruction, 900, 378);
 
             CapsuleType[] capsules = CapsuleType.values();
             for (int i = 0; i < capsules.length; i++) {
@@ -2618,11 +2661,14 @@ public final class BattleDemo {
                 int row = i / 4;
                 int x = 48 + col * 216;
                 int y = 390 + row * 62;
+                boolean unlocked = capsule.isUnlocked();
                 g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 13));
-                g.setColor(INK);
-                g.drawString((i + 1) + ". " + capsule.label, x + 46, y + 20);
+                g.setColor(unlocked ? INK : new Color(104, 108, 99));
+                String name = (i + 1) + ". " + capsule.label + (unlocked ? "" : " · LOCKED");
+                g.drawString(ellipsize(g, name, 146), x + 46, y + 20);
                 String affinity;
-                if (capsule == CapsuleType.FIELD) affinity = "standard odds";
+                if (!unlocked) affinity = capsule.unlockRequirement();
+                else if (capsule == CapsuleType.FIELD) affinity = "standard odds";
                 else if (capsule == CapsuleType.PRISM) affinity = "any type +28%";
                 else if (capsule.matches(enemy)) {
                     affinity = "MATCH +" + (int) Math.round(capsule.bonusAgainst(enemy) * 100)
@@ -2632,11 +2678,11 @@ public final class BattleDemo {
                         + "% · " + capsule.affinityText.toUpperCase(Locale.ROOT).replace(" / ", "/");
                 }
                 g.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 8));
-                g.setColor(new Color(71, 91, 70));
+                g.setColor(unlocked ? new Color(71, 91, 70) : new Color(108, 111, 102));
                 g.drawString(ellipsize(g, affinity, 151), x + 46, y + 36);
                 g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 11));
-                g.setColor(capsule.color.darker());
-                rightText(g, (int) Math.round(captureChance(capsule) * 100) + "%", x + 198, y + 49);
+                g.setColor(unlocked ? capsule.color.darker() : new Color(108, 111, 102));
+                rightText(g, unlocked ? (int) Math.round(captureChance(capsule) * 100) + "%" : "LOCKED", x + 198, y + 49);
             }
         }
 
@@ -2800,13 +2846,18 @@ public final class BattleDemo {
 
         private void drawCapsule(Graphics2D g, int cx, int cy, double scale, int opening, int lift,
                 boolean large, CapsuleType capsuleType) {
+            boolean openingAnimation = phase == Phase.SUMMONING || phase == Phase.RECALL_PLAYER
+                || phase == Phase.RECALL_ENEMY
+                || (phase == Phase.ANIMATING && (capturing || captureBreakEffect));
+            int activeOpening = openingAnimation && capsuleType == selectedCapsule
+                ? Math.max(0, Math.min(opening, 8)) : 0;
             int w = Math.max(1, (int) ((large ? 62 : 42) * scale));
             int h = Math.max(1, (int) ((large ? 112 : 76) * scale));
             int x = cx - w / 2;
             int y = cy - h / 2;
             int split = y + h / 2;
             int radius = Math.max(8, w * 3 / 4);
-            int topLift = Math.max(0, opening * (large ? 2 : 1));
+            int topLift = activeOpening * (large ? 2 : 1);
             Color shell = capsuleType.color;
             Color dark = new Color(26, 51, 48);
             Color base = new Color(242, 237, 211);
@@ -2842,7 +2893,7 @@ public final class BattleDemo {
             g.setColor(shell.darker());
             g.fillOval(cx - Math.max(2, emblem / 5), emblemY + emblem / 3,
                 Math.max(4, emblem * 2 / 5), Math.max(4, emblem / 3));
-            if (opening > 0) {
+            if (activeOpening > 0) {
                 g.setColor(new Color(255, 225, 141, 220));
                 g.fillOval(cx - w / 3, split - h / 12 + lift, Math.max(1, 2 * w / 3), Math.max(4, h / 8));
             }

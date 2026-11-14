@@ -11,6 +11,5 @@ if defined JDK_BIN (
   set "JAVA_EXE=java"
 )
 if not exist out mkdir out
-"%JAVAC_EXE%" --release 25 -encoding UTF-8 -d out src\Main.java src\echoesofluma\BattleDemo.java src\echoesofluma\BeastIllustrations.java src\echoesofluma\BeastAnimator.java src\echoesofluma\BeastDemo.java
+"%JAVAC_EXE%" --release 25 -encoding UTF-8 -d out src\Main.java src\echoesofluma\BattleDemo.java src\echoesofluma\PixelBitmapFont.java src\echoesofluma\BeastIllustrations.java src\echoesofluma\BeastAnimator.java src\echoesofluma\BeastDemo.java
 exit /b %ERRORLEVEL%
-
