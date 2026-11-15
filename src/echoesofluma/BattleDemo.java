@@ -544,7 +544,6 @@ public final class BattleDemo {
         screenCards.add(worldMapPanel, "world-map");
         mainMenu.newGame.addActionListener(e -> startNewGame());
         mainMenu.continueGame.addActionListener(e -> continueGame());
-        mainMenu.learnButton.addActionListener(e -> showLearningJournal());
         mainMenu.settings.addActionListener(e -> showSettings());
         mainMenu.quit.addActionListener(e -> frame.dispose());
         trainerSelection.backButton.addActionListener(e -> showScreen("title"));
@@ -1037,218 +1036,97 @@ public final class BattleDemo {
     private final class MainMenu extends JPanel {
         final JButton newGame = menuButton("✦  New Game");
         final JButton continueGame = menuButton("▤  Continue");
-        final JButton learnButton = menuButton("◈  Learnings");
         final JButton settings = menuButton("⚙  Settings");
         final JButton quit = menuButton("⇥  Quit");
+        private final BufferedImage titleArt = loadTitleArt();
 
         MainMenu() {
             setLayout(null);
+            setBackground(new Color(12, 59, 101));
             setFocusable(true);
+            styleTitleButton(newGame);
+            styleTitleButton(continueGame);
+            styleTitleButton(settings);
+            styleTitleButton(quit);
             add(newGame);
             add(continueGame);
-            add(learnButton);
             add(settings);
             add(quit);
         }
 
-        void refreshButtons() {
-            continueGame.setEnabled(SAVE.hasSave);
-            learnButton.setEnabled(hasLessons());
+        private void styleTitleButton(JButton button) {
+            button.setForeground(Color.WHITE);
+            button.setBackground(new Color(5, 42, 76));
+            button.setOpaque(true);
+            button.setContentAreaFilled(true);
+            button.setFocusPainted(false);
+            button.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(94, 220, 247), 3),
+                BorderFactory.createCompoundBorder(
+                    BorderFactory.createLineBorder(new Color(7, 28, 55), 2),
+                    BorderFactory.createEmptyBorder(7, 18, 7, 14))));
         }
 
-        private boolean hasLessons() {
-            for (boolean unlocked : SAVE.lessonUnlocked) if (unlocked) return true;
-            return false;
+        private BufferedImage loadTitleArt() {
+            Path file = Path.of("assets", "title", "echoes-of-luma-title.png");
+            try {
+                if (Files.isRegularFile(file)) return javax.imageio.ImageIO.read(file.toFile());
+                try (var resource = BattleDemo.class.getResourceAsStream("/assets/title/echoes-of-luma-title.png")) {
+                    if (resource != null) return javax.imageio.ImageIO.read(resource);
+                }
+            } catch (IOException | RuntimeException ignored) { }
+            return null;
+        }
+
+        void refreshButtons() {
+            continueGame.setEnabled(SAVE.hasSave);
         }
 
         @Override public void doLayout() {
-            double scale = Math.min(getWidth() / 960.0, getHeight() / 540.0);
-            int ox = (int) ((getWidth() - 960 * scale) / 2);
-            int oy = (int) ((getHeight() - 540 * scale) / 2);
-            int x = ox + (int) (680 * scale);
-            int width = (int) (230 * scale);
-            int height = (int) (42 * scale);
-            int gap = (int) (6 * scale);
-            int y = oy + (int) (250 * scale);
-            JButton[] buttons = {newGame, continueGame, learnButton, settings, quit};
+            double scale = Math.min(getWidth() / 1024.0, getHeight() / 576.0);
+            int ox = (int) ((getWidth() - 1024 * scale) / 2);
+            int oy = (int) ((getHeight() - 576 * scale) / 2);
+            int x = 720, y = 218, width = 260, height = 52, gap = 12;
+            JButton[] buttons = {newGame, continueGame, settings, quit};
             for (int i = 0; i < buttons.length; i++) {
-                buttons[i].setBounds(x, y + i * (height + gap), width, height);
-                buttons[i].setFont(new Font(Font.MONOSPACED, Font.BOLD, Math.max(13, (int) (18 * scale))));
+                buttons[i].setBounds(
+                    ox + (int) (x * scale),
+                    oy + (int) ((y + i * (height + gap)) * scale),
+                    (int) (width * scale),
+                    (int) (height * scale));
+                buttons[i].setFont(new Font(Font.MONOSPACED, Font.BOLD, Math.max(13, (int) (19 * scale))));
             }
         }
 
         @Override protected void paintComponent(Graphics graphics) {
             super.paintComponent(graphics);
             Graphics2D g = (Graphics2D) graphics.create();
-            double scale = Math.min(getWidth() / 960.0, getHeight() / 540.0);
-            int drawW = (int) (960 * scale), drawH = (int) (540 * scale);
+            double scale = Math.min(getWidth() / 1024.0, getHeight() / 576.0);
+            int drawW = (int) (1024 * scale), drawH = (int) (576 * scale);
             int ox = (getWidth() - drawW) / 2, oy = (getHeight() - drawH) / 2;
             g.translate(ox, oy);
             g.scale(scale, scale);
-            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
             g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
-            drawTitleWorld(g);
-            drawTitleTrainer(g, 155, 312);
-            Beast titleBeast = ROSTER[Math.max(0, Math.min(ROSTER.length - 1, SAVE.lastBeast))];
-            BeastIllustrations.draw(g, titleBeast.sprite, 262, 381, 112, 112, 1f, false);
-
-            g.setFont(new Font(Font.SERIF, Font.BOLD, 58));
-            g.setColor(new Color(8, 45, 87, 190));
-            g.drawString("ECHOES", 62, 105);
-            g.drawString("OF LUMA", 62, 166);
-            g.setColor(new Color(243, 252, 255));
-            g.drawString("ECHOES", 58, 101);
-            g.drawString("OF LUMA", 58, 162);
-            g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 19));
-            g.setColor(new Color(11, 53, 90));
-            g.drawString("BEAST TRAINER ADVENTURE", 74, 196);
+            g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+            if (titleArt != null) {
+                g.drawImage(titleArt, 0, 0, 1024, 576, null);
+            } else {
+                g.setPaint(new GradientPaint(0, 0, new Color(57, 164, 235), 0, 576, new Color(15, 107, 149)));
+                g.fillRect(0, 0, 1024, 576);
+                g.setColor(Color.WHITE);
+                g.setFont(new Font(Font.SERIF, Font.BOLD, 58));
+                g.drawString("ECHOES OF LUMA", 58, 100);
+            }
             g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 17));
+            g.setColor(new Color(5, 45, 78, 190));
+            g.drawString("CATCH. LEARN. GROW.", 742, 56);
             g.setColor(Color.WHITE);
-            g.drawString("CATCH. LEARN. GROW.", 692, 220);
+            g.drawString("CATCH. LEARN. GROW.", 740, 54);
             g.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 14));
-            g.drawString("Be a better you.", 744, 243);
+            g.drawString("Be a better you.", 774, 79);
             g.dispose();
         }
-
-        private void drawTitleWorld(Graphics2D g) {
-            g.setPaint(new GradientPaint(0, 0, new Color(51, 157, 231), 0, 540, new Color(198, 232, 242)));
-            g.fillRect(0, 0, 960, 540);
-            g.setColor(new Color(255, 241, 190, 75)); g.fillOval(570, -120, 430, 330);
-            drawMenuCloud(g, 530, 86, 1.12); drawMenuCloud(g, 798, 139, .82); drawMenuCloud(g, 361, 123, .7);
-
-            Path2D backMountains = new Path2D.Double();
-            backMountains.moveTo(0, 318); backMountains.lineTo(0, 277); backMountains.lineTo(122, 186);
-            backMountains.lineTo(192, 236); backMountains.lineTo(307, 146); backMountains.lineTo(408, 257);
-            backMountains.lineTo(520, 183); backMountains.lineTo(628, 272); backMountains.lineTo(754, 160);
-            backMountains.lineTo(865, 243); backMountains.lineTo(960, 175); backMountains.lineTo(960, 366); backMountains.closePath();
-            g.setPaint(new GradientPaint(0, 146, new Color(157, 207, 224), 0, 360, new Color(113, 172, 195)));
-            g.fill(backMountains);
-            Path2D frontMountains = new Path2D.Double();
-            frontMountains.moveTo(0, 362); frontMountains.lineTo(0, 314); frontMountains.lineTo(112, 257);
-            frontMountains.lineTo(210, 300); frontMountains.lineTo(331, 226); frontMountains.lineTo(448, 322);
-            frontMountains.lineTo(559, 263); frontMountains.lineTo(669, 321); frontMountains.lineTo(789, 232);
-            frontMountains.lineTo(899, 296); frontMountains.lineTo(960, 260); frontMountains.lineTo(960, 389); frontMountains.closePath();
-            g.setPaint(new GradientPaint(0, 220, new Color(89, 156, 187), 0, 389, new Color(59, 125, 165)));
-            g.fill(frontMountains);
-            g.setColor(new Color(231, 247, 246, 185));
-            g.drawLine(122, 186, 192, 236); g.drawLine(307, 146, 408, 257); g.drawLine(754, 160, 865, 243);
-
-            Path2D island = new Path2D.Double();
-            island.moveTo(393, 340); island.curveTo(435, 319, 477, 311, 515, 318);
-            island.curveTo(562, 309, 617, 328, 657, 350); island.lineTo(696, 386);
-            island.lineTo(664, 416); island.lineTo(405, 416); island.lineTo(370, 390); island.closePath();
-            g.setPaint(new GradientPaint(0, 328, new Color(151, 127, 103), 0, 421, new Color(73, 88, 76)));
-            g.fill(island);
-            g.setColor(new Color(45, 111, 124, 150)); g.draw(new QuadCurve2D.Double(371, 397, 515, 420, 687, 392));
-            drawCastleTower(g, 443, 226, 0.68);
-            drawCastleTower(g, 612, 222, 0.74);
-            drawCastleTower(g, 486, 174, 1.0);
-            g.setPaint(new GradientPaint(463, 239, new Color(246, 230, 186), 463, 379, new Color(187, 181, 151)));
-            g.fillRoundRect(454, 237, 191, 143, 10, 10);
-            g.setColor(new Color(255, 244, 211)); g.fillRoundRect(448, 231, 203, 16, 9, 9);
-            g.setColor(new Color(213, 199, 160)); g.fillRoundRect(470, 270, 48, 111, 5, 5); g.fillRoundRect(579, 270, 47, 111, 5, 5);
-            g.setColor(new Color(30, 92, 138)); g.fillRoundRect(529, 280, 43, 101, 18, 18);
-            g.setColor(new Color(176, 232, 241, 190)); g.drawRoundRect(536, 289, 29, 87, 13, 13);
-            g.setColor(new Color(255, 222, 132)); g.setStroke(new BasicStroke(2));
-            g.drawOval(533, 307, 35, 35); g.drawOval(541, 315, 19, 19);
-
-            Path2D farBank = new Path2D.Double();
-            farBank.moveTo(0, 400); farBank.curveTo(168, 374, 295, 407, 405, 441);
-            farBank.curveTo(519, 467, 671, 418, 960, 392); farBank.lineTo(960, 540); farBank.lineTo(0, 540); farBank.closePath();
-            g.setPaint(new GradientPaint(0, 395, new Color(37, 119, 110), 0, 540, new Color(13, 77, 112)));
-            g.fill(farBank);
-            Path2D river = new Path2D.Double();
-            river.moveTo(313, 540); river.curveTo(378, 495, 487, 475, 572, 452);
-            river.curveTo(666, 426, 694, 443, 771, 418); river.curveTo(828, 397, 895, 409, 960, 393);
-            river.lineTo(960, 540); river.closePath();
-            g.setPaint(new GradientPaint(0, 430, new Color(66, 184, 226), 0, 540, new Color(31, 125, 192)));
-            g.fill(river);
-            g.setColor(new Color(185, 239, 243, 155)); g.setStroke(new BasicStroke(3));
-            g.draw(new QuadCurve2D.Double(513, 493, 687, 437, 831, 427));
-            g.draw(new QuadCurve2D.Double(655, 524, 803, 478, 938, 451));
-
-            Path2D meadow = new Path2D.Double();
-            meadow.moveTo(0, 417); meadow.curveTo(154, 395, 272, 424, 385, 455);
-            meadow.curveTo(460, 478, 503, 481, 555, 466); meadow.lineTo(427, 540); meadow.lineTo(0, 540); meadow.closePath();
-            g.setPaint(new GradientPaint(0, 403, new Color(115, 179, 78), 0, 540, new Color(51, 132, 67)));
-            g.fill(meadow);
-            g.setColor(new Color(236, 210, 151));
-            Path2D path = new Path2D.Double(); path.moveTo(173, 540); path.curveTo(245, 492, 337, 469, 400, 457);
-            path.curveTo(475, 440, 521, 439, 579, 455); path.curveTo(530, 460, 490, 475, 448, 502);
-            path.lineTo(360, 540); path.closePath(); g.fill(path);
-
-            for (int i = 0; i < 18; i++) {
-                int x = i < 9 ? i * 42 - 34 : 786 + (i - 9) * 42;
-                int y = 253 + (i % 4) * 19;
-                drawMenuTree(g, x, y, 45 + i % 3 * 8);
-            }
-            Random landscape = new Random(22);
-            for (int i = 0; i < 70; i++) {
-                int x = landscape.nextInt(960), y = 420 + landscape.nextInt(115);
-                g.setColor(i % 4 == 0 ? new Color(251, 238, 184, 190) : new Color(163, 212, 113, 130));
-                g.fillOval(x, y, 4 + i % 3 * 2, 2 + i % 2 * 2);
-            }
-        }
-
-        private void drawMenuCloud(Graphics2D g, int x, int y, double scale) {
-            Graphics2D cloud = (Graphics2D) g.create(); cloud.translate(x, y); cloud.scale(scale, scale);
-            cloud.setColor(new Color(255, 255, 255, 220));
-            cloud.fillOval(0, 16, 124, 34); cloud.fillOval(24, 0, 51, 44); cloud.fillOval(61, 7, 56, 40);
-            cloud.setColor(new Color(255, 255, 255, 98)); cloud.drawArc(23, 8, 66, 38, 0, 175);
-            cloud.dispose();
-        }
-
-        private void drawCastleTower(Graphics2D g, int x, int y, double scale) {
-            Graphics2D tower = (Graphics2D) g.create(); tower.translate(x, y); tower.scale(scale, scale);
-            tower.setColor(new Color(210, 209, 188)); tower.fillRoundRect(0, 24, 38, 113, 5, 5);
-            tower.setColor(new Color(248, 233, 198)); tower.fillRoundRect(5, 29, 28, 107, 4, 4);
-            tower.setColor(new Color(133, 104, 105));
-            tower.fillPolygon(new int[] {-5, 19, 43}, new int[] {31, -17, 31}, 3);
-            tower.setColor(new Color(247, 226, 183)); tower.fillPolygon(new int[] {2, 19, 36}, new int[] {27, -6, 27}, 3);
-            tower.setColor(new Color(50, 112, 154)); tower.fillRoundRect(14, 63, 11, 29, 8, 8);
-            tower.setColor(new Color(255, 250, 217)); tower.drawLine(19, 2, 19, -15); tower.drawLine(19, -15, 27, -8);
-            tower.dispose();
-        }
-
-        private void drawMenuTree(Graphics2D g, int x, int y, int size) {
-            g.setPaint(new GradientPaint(x + size / 2, y + 15, new Color(115, 86, 57), x + size / 2, y + size * 2, new Color(73, 71, 48)));
-            g.fillRoundRect(x + size / 2 - 5, y + 18, 11, size * 2, 6, 6);
-            Color[] greens = {new Color(27, 92, 55), new Color(47, 125, 62), new Color(82, 157, 73)};
-            int[][] blobs = {{0, 16, 36}, {18, 0, 40}, {35, 17, 42}, {7, 34, 38}, {29, 39, 38}};
-            for (int i = 0; i < blobs.length; i++) {
-                int bx = x + blobs[i][0] * size / 58, by = y + blobs[i][1] * size / 58, d = blobs[i][2] * size / 58;
-                g.setPaint(new GradientPaint(bx, by, greens[(i + 1) % greens.length], bx + d, by + d, greens[i % greens.length]));
-                g.fillOval(bx, by, d, d * 3 / 4);
-            }
-        }
-
-        private void drawTitleTrainer(Graphics2D g, int x, int y) {
-            if (activeTrainer.art != null) {
-                g.setColor(new Color(24, 68, 63, 95));
-                g.fillOval(x - 4, y + 164, 92, 15);
-                BeastIllustrations.draw(g, activeTrainer.art, x - 8, y - 2, 100, 170, 1f, false);
-                return;
-            }
-            g.setColor(new Color(24, 68, 63, 95)); g.fillOval(x + 1, y + 166, 83, 16);
-            g.setPaint(new GradientPaint(x + 8, y + 60, new Color(36, 48, 67), x + 69, y + 145, new Color(16, 29, 50)));
-            g.fillRoundRect(x + 13, y + 111, 23, 51, 11, 11); g.fillRoundRect(x + 43, y + 111, 23, 51, 11, 11);
-            g.setColor(new Color(23, 42, 67)); g.fillRoundRect(x + 9, y + 153, 30, 14, 10, 10); g.fillRoundRect(x + 40, y + 153, 30, 14, 10, 10);
-            g.setColor(new Color(237, 235, 221)); g.fillRoundRect(x + 8, y + 161, 33, 9, 8, 8); g.fillRoundRect(x + 39, y + 161, 33, 9, 8, 8);
-            g.setPaint(new GradientPaint(x + 5, y + 53, new Color(61, 124, 200), x + 77, y + 128, new Color(22, 72, 137)));
-            g.fillRoundRect(x + 6, y + 61, 67, 63, 22, 22);
-            g.setColor(new Color(91, 158, 216)); g.setStroke(new BasicStroke(3)); g.drawLine(x + 40, y + 72, x + 40, y + 116);
-            g.setColor(new Color(105, 62, 43)); g.fillRoundRect(x + 46, y + 71, 29, 46, 9, 9);
-            g.setColor(new Color(150, 91, 56)); g.fillRoundRect(x + 49, y + 90, 27, 30, 8, 8);
-            g.setColor(new Color(232, 183, 145)); g.fillRoundRect(x + 27, y + 30, 36, 42, 15, 15);
-            g.setColor(new Color(59, 42, 36));
-            g.fill(new Arc2D.Double(x + 23, y + 14, 46, 47, 0, 180, Arc2D.PIE));
-            g.fillRoundRect(x + 23, y + 36, 12, 20, 8, 8);
-            g.setColor(new Color(193, 145, 112)); g.fillOval(x + 21, y + 43, 10, 13);
-            g.setColor(new Color(255, 228, 190, 170)); g.drawArc(x + 34, y + 20, 27, 21, 15, 120);
-        }
     }
-
     private final class TrainerSelectionPanel extends JPanel {
         private static final int PAGE_SIZE = 9;
         private static final int CARD_WIDTH = 270;
