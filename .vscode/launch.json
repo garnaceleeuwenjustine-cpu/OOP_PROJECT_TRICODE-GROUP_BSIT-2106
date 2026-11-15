@@ -11,6 +11,17 @@
         "${workspaceFolder}/out"
       ],
       "preLaunchTask": "Build Echoes of Luma Battle Demo"
+    },
+    {
+      "type": "java",
+      "name": "Preview Member 3 Pack (Standalone)",
+      "request": "launch",
+      "mainClass": "echoesofluma.CreaturePC",
+      "cwd": "${workspaceFolder}",
+      "classPaths": [
+        "${workspaceFolder}/out"
+      ],
+      "preLaunchTask": "Build Echoes of Luma Battle Demo"
     }
   ]
 }

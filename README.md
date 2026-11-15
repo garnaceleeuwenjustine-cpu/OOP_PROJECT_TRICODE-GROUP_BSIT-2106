@@ -1,44 +1,26 @@
 # Echoes of Luma
 
-A 2D beast-battle game demo written in Java Swing. The project uses pixel-art sprites, capsule selection, type-based moves, and animated battle effects.
-
-## Folder layout
-
-```text
-OOP_PROJECT_TRICODE-GROUP_BSIT-2106/
-├── src/
-│   ├── Main.java
-│   └── echoesofluma/
-│       ├── BattleDemo.java
-│       ├── BeastAnimator.java
-│       └── BeastDemo.java
-├── assets/
-│   └── beasts/ (PNG sprites, sprite sheets, and editable SVGs)
-├── docs/
-│   └── Project-Proposal.docx
-├── screenshots/
-├── tools/
-│   └── BeastSvgExporter.java
-├── .vscode/
-├── .gitignore
-├── build.bat
-├── run.bat
-└── README.md
-```
+Echoes of Luma is a Java Swing beast-battling RPG. The complete game includes the title screen, story and starter selection, world map, ethical-choice battles, catchable beasts, and the in-game bag, shop, Beast Dex, and storage.
 
 ## Run the game
 
-- **Windows:** Double-click `run.bat` or run it from a terminal. It builds the Java sources into `bin/` and starts the game.
-- **VS Code:** Open this repository folder and press **F5**. If prompted, install the Java extension pack. The build task calls `build.bat` before launch.
-- **Command line:** From the repository root, run `run.bat`.
+- **Windows:** Double-click `run.bat`, or run it from PowerShell in this folder.
+- **VS Code:** Open this repository folder and press **F5** with **Run Echoes of Luma** selected. The launch task builds the project first.
+- **Java:** Use JDK 25 or newer. The build script compiles with `--release 25`.
 
-Use Java 17 or later. Set `JAVA_HOME` to a JDK installation or make `javac` and `java` available on `PATH`. The scripts also recognize the JDK 27 installation under `Program Files\Java`. Generated output in `bin/` and all `.class` files are ignored by Git.
+The main project launches through `src/Main.java`. The standalone **Preview Member 3 Pack (Standalone)** launch option is only for previewing the bag/shop panel; use **Run Echoes of Luma** for the full game.
 
-## Project files
+## Controls
 
-- `src/` contains the Java source code. `Main.java` starts the app through the packaged game in `echoesofluma/`.
-- `assets/` contains the beast sprites, sprite sheets, and editable SVGs.
-- `docs/` contains the supplied project proposal.
-- `screenshots/` is for screenshots of the running game and project.
-- `tools/` contains the SVG exporter utility.
+- Press **M** or **Escape** during play to open the game menu.
+- Open **Bag & Items** from the game menu, or choose **Bag** during battle.
+- Use **1–3** to answer an ethics question and **1–8** to select a capsule.
+- Use **Enter**, **Space**, or **Z** to advance story and battle dialogue.
 
+## Project structure
+
+- `src/` — Java game source.
+- `assets/` — title screen, battle backgrounds, trainers, and beast artwork.
+- `build.bat` — compiles source into `out/`.
+- `run.bat` — builds and starts the complete game.
+- `.vscode/` — VS Code build task and launch configurations.
