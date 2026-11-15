@@ -3,69 +3,58 @@ package echoesofluma;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.FlowLayout;
+import java.awt.Font;
+import java.awt.GradientPaint;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
-import java.io.IOException;
+import java.awt.geom.Path2D;
+import java.awt.image.BufferedImage;
 import javax.swing.JComboBox;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
-import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 
-/** Swing preview for all 27 beasts, with an idle loop and simple world movement. */
+/** Preview for all 28 illustrated beasts with a gentle bob and Java movement. */
 public final class BeastDemo extends JPanel {
-    private static final int DRAW_SCALE = 2;
-
+    private static final int ART_WIDTH = 285;
+    private static final int ART_HEIGHT = 300;
     private static final String[] BEAST_NAMES = {
-        "Pebblit", "Glowfin", "Bramblet", "Emberkit", "Chimelet",
-        "Mosskip", "Copperclack", "Mistmoth", "Liltail", "Flickeray",
-        "Moonhare", "Dusklynx", "Thundertuft", "Glasswing", "Songroot",
-        "Solflare Stag", "Tidewisp Serpent", "Ironhowl", "Skyforge Roc", "Bloomguard",
-        "Aurion", "Vesperwing", "Tempest Crown", "Lumenwhale", "Umbralynx",
-        "Chronobloom", "Echoryn"
+        "Emberwren", "Reefclad", "Thornstride", "Stormhorn", "Citrinax", "Moonwhisk",
+        "Fungalump", "Skydrake", "Lantern Beetle", "Pebblekin", "Inkwhorl", "Frostowl",
+        "Thornhop", "Coralclaw", "Moonglint", "Kelpcoil", "Dunecrest", "Cogfrog",
+        "Petalhart", "Basaltbat", "Geode Snail", "Thunderstoat", "Marshkite", "Starpuff",
+        "Vineknuckle", "Honeyhide", "Crockmimic", "Aurorawhale"
+    };
+    private static final String[] ART_FILES = {
+        "01-emberwren.png", "02-reefclad.png", "03-thornstride.png", "04-stormhorn.png",
+        "05-citrinax.png", "06-moonwhisk.png", "07-fungalump.jpg", "08-skydrake.jpg",
+        "09-lantern-beetle.jpg", "10-pebblekin.jpg", "11-inkwhorl.jpg", "12-frostowl.jpg",
+        "13-thornhop.jpg", "14-coralclaw.jpg", "15-moonglint.jpg", "16-kelpcoil.jpg",
+        "17-dunecrest.jpg", "18-cogfrog.jpg", "19-petalhart.jpg", "20-basaltbat.jpg",
+        "21-geode-snail.jpg", "22-thunderstoat.jpg", "23-marshkite.jpg", "24-starpuff.jpg",
+        "25-vineknuckle.jpg", "26-honeyhide.jpg", "27-crockmimic.jpg", "28-aurorawhale.jpg"
     };
 
-    private static final String[] SPRITE_FILES = {
-        "01-pebblit-idle-sheet.png", "02-glowfin-idle-sheet.png",
-        "03-bramblet-idle-sheet.png", "04-emberkit-idle-sheet.png",
-        "05-chimelet-idle-sheet.png", "06-mosskip-idle-sheet.png",
-        "07-copperclack-idle-sheet.png", "08-mistmoth-idle-sheet.png",
-        "09-liltail-idle-sheet.png", "10-flickeray-idle-sheet.png",
-        "11-moonhare-idle-sheet.png", "12-dusklynx-idle-sheet.png",
-        "13-thundertuft-idle-sheet.png", "14-glasswing-idle-sheet.png",
-        "15-songroot-idle-sheet.png", "16-solflare-stag-idle-sheet.png",
-        "17-tidewisp-serpent-idle-sheet.png", "18-ironhowl-idle-sheet.png",
-        "19-skyforge-roc-idle-sheet.png", "20-bloomguard-idle-sheet.png",
-        "21-aurion-idle-sheet.png", "22-vesperwing-idle-sheet.png",
-        "23-tempest-crown-idle-sheet.png", "24-lumenwhale-idle-sheet.png",
-        "25-umbralynx-idle-sheet.png", "26-chronobloom-idle-sheet.png",
-        "27-echoryn-idle-sheet.png"
-    };
-
-    private BeastAnimator currentBeast;
-    private String currentBeastName = "";
-    private int drawWidth;
-    private double x = 24;
+    private BufferedImage currentArt;
+    private String currentName = "Emberwren";
+    private double x = 36;
     private double direction = 1;
+    private int tick;
     private long previousNanos = System.nanoTime();
 
     private BeastDemo() {
-        setPreferredSize(new java.awt.Dimension(800, 360));
-        setBackground(new Color(24, 31, 45));
-
-        Timer gameTimer = new Timer(16, event -> updateGame());
-        gameTimer.start();
+        setPreferredSize(new java.awt.Dimension(960, 520));
+        setBackground(new Color(209, 235, 243));
+        new Timer(16, event -> updateGame()).start();
     }
 
-    private void selectBeast(int index) throws IOException {
-        String spritePath = "assets/spritesheets/" + SPRITE_FILES[index];
-        currentBeast = BeastAnimator.fromFile(spritePath, 8, 0.10);
-        currentBeastName = BEAST_NAMES[index];
-        drawWidth = currentBeast.getFrameWidth() * DRAW_SCALE;
-        x = 24;
+    private void selectBeast(int index) {
+        currentArt = BeastIllustrations.load(ART_FILES[index]);
+        currentName = BEAST_NAMES[index];
+        x = 36;
         direction = 1;
         repaint();
     }
@@ -74,73 +63,55 @@ public final class BeastDemo extends JPanel {
         long now = System.nanoTime();
         double deltaSeconds = Math.min((now - previousNanos) / 1_000_000_000.0, 0.05);
         previousNanos = now;
-
-        if (currentBeast != null) {
-            currentBeast.update(deltaSeconds);
-            x += direction * 110.0 * deltaSeconds;
-            if (x < 0 || x + drawWidth > getWidth()) {
-                direction *= -1;
-                x = Math.max(0, Math.min(x, getWidth() - drawWidth));
-            }
+        x += direction * 90.0 * deltaSeconds;
+        if (x < 28 || x + ART_WIDTH > getWidth() - 28) {
+            direction *= -1;
+            x = Math.max(28, Math.min(x, getWidth() - ART_WIDTH - 28));
         }
+        tick++;
         repaint();
     }
 
-    @Override
-    protected void paintComponent(Graphics graphics) {
+    @Override protected void paintComponent(Graphics graphics) {
         super.paintComponent(graphics);
         Graphics2D g = (Graphics2D) graphics.create();
-        try {
-            g.setRenderingHint(
-                    RenderingHints.KEY_INTERPOLATION,
-                    RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
-            g.setColor(new Color(238, 240, 245));
-            g.drawString(currentBeastName + " — idle animation + Java movement", 24, 32);
-            if (currentBeast != null) {
-                currentBeast.draw(g, (int) x, 100, DRAW_SCALE);
-            }
-        } finally {
-            g.dispose();
-        }
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+        g.setPaint(new GradientPaint(0, 0, new Color(126, 199, 231), 0, 360, new Color(218, 239, 224)));
+        g.fillRect(0, 0, getWidth(), getHeight());
+        Path2D hills = new Path2D.Double();
+        hills.moveTo(0, 308); hills.curveTo(180, 205, 330, 323, 500, 248);
+        hills.curveTo(700, 158, 810, 316, getWidth(), 212); hills.lineTo(getWidth(), getHeight());
+        hills.lineTo(0, getHeight()); hills.closePath();
+        g.setColor(new Color(58, 139, 82)); g.fill(hills);
+        g.setColor(new Color(37, 102, 63)); g.fillRect(0, 424, getWidth(), 96);
+        g.setColor(new Color(255, 255, 255, 230)); g.fillRoundRect(24, 22, getWidth() - 48, 62, 18, 18);
+        g.setColor(new Color(22, 64, 71)); g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 24));
+        g.drawString(currentName + "  ·  Illustrated Beast Preview", 46, 61);
+        int bob = (int) Math.round(Math.sin(tick * 0.08) * 5);
+        int drawX = (int) Math.round(x);
+        g.setColor(new Color(20, 49, 35, 75)); g.fillOval(drawX + 42, 394, 194, 24);
+        if (currentArt != null) BeastIllustrations.draw(g, currentArt, drawX, 96 + bob, ART_WIDTH, ART_HEIGHT, 1f, direction < 0);
+        g.setColor(new Color(247, 247, 232, 235)); g.fillRoundRect(24, 444, getWidth() - 48, 54, 16, 16);
+        g.setFont(new Font(Font.MONOSPACED, Font.BOLD, 15)); g.setColor(new Color(35, 64, 66));
+        g.drawString("28 new illustrated beasts  ·  gentle idle motion + movement", 48, 477);
+        g.dispose();
     }
 
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> {
-            JFrame window = new JFrame("Echoes of Luma — Beast Animation Preview");
+            JFrame window = new JFrame("Echoes of Luma — Beast Artwork Preview");
             window.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-
             BeastDemo canvas = new BeastDemo();
             JComboBox<String> beastPicker = new JComboBox<>(BEAST_NAMES);
             JPanel controls = new JPanel(new FlowLayout(FlowLayout.LEFT));
             controls.add(new JLabel("Preview beast:"));
             controls.add(beastPicker);
-
-            beastPicker.addActionListener(event -> {
-                int index = beastPicker.getSelectedIndex();
-                try {
-                    canvas.selectBeast(index);
-                } catch (IOException error) {
-                    JOptionPane.showMessageDialog(
-                            window,
-                            "Could not load " + BEAST_NAMES[index] + ":\n" + error.getMessage(),
-                            "Sprite load error",
-                            JOptionPane.ERROR_MESSAGE);
-                }
-            });
-
+            beastPicker.addActionListener(event -> canvas.selectBeast(beastPicker.getSelectedIndex()));
             window.setLayout(new BorderLayout());
             window.add(controls, BorderLayout.NORTH);
             window.add(canvas, BorderLayout.CENTER);
-            try {
-                canvas.selectBeast(0);
-            } catch (IOException error) {
-                JOptionPane.showMessageDialog(
-                        window,
-                        "Could not load Pebblit:\n" + error.getMessage(),
-                        "Sprite load error",
-                        JOptionPane.ERROR_MESSAGE);
-            }
-
+            canvas.selectBeast(0);
             window.pack();
             window.setLocationRelativeTo(null);
             window.setVisible(true);

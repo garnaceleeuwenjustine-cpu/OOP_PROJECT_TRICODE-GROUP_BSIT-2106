@@ -3,11 +3,13 @@
   "configurations": [
     {
       "type": "java",
-      "name": "Run Echoes of Luma Battle Demo",
+      "name": "Run Echoes of Luma",
       "request": "launch",
       "mainClass": "Main",
       "cwd": "${workspaceFolder}",
-      "classPaths": ["${workspaceFolder}/bin"],
+      "classPaths": [
+        "${workspaceFolder}/out"
+      ],
       "preLaunchTask": "Build Echoes of Luma Battle Demo"
     }
   ]

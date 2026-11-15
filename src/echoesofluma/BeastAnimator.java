@@ -36,7 +36,7 @@ public final class BeastAnimator {
         this.secondsPerFrame = secondsPerFrame;
     }
 
-    /** Loads a sheet from the classpath, such as /spritesheets/01-pebblit-idle-sheet.png. */
+    /** Loads a sheet from the classpath, from any horizontal PNG sprite sheet. */
     public static BeastAnimator fromResource(
             Class<?> resourceOwner,
             String resourcePath,

@@ -24,6 +24,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.Arrays;
+import java.util.function.BiConsumer;
 import javax.imageio.ImageIO;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
@@ -93,10 +95,21 @@ public final class WorldMapPanel extends JPanel {
     private final JLabel description = new JLabel("<html>Your journey begins on the forest road.</html>");
     private final JLabel trainerName = new JLabel("TRAINER  ·  ADVENTURER");
     private final List<JButton> destinationButtons = new ArrayList<>();
+    private final List<JButton> stageButtons = new ArrayList<>();
+    private final JPanel stagesGrid = new JPanel(new java.awt.GridLayout(6, 5, 4, 4));
+    private final JLabel stageHeader = new JLabel("STARTING FOREST · LEVELS");
+    private final JLabel stageProgress = new JLabel("0 / 30 complete");
     private final Runnable onBack;
+    private final Runnable onOpenBag;
+    private final BiConsumer<Integer, Integer> onStartStage;
+    private final int[] completedStages = new int[5];
+    private int selectedRegion;
+    private boolean standingAtSelectedRegion = true;
 
-    public WorldMapPanel(Runnable onBack) {
+    public WorldMapPanel(Runnable onBack, Runnable onOpenBag, BiConsumer<Integer, Integer> onStartStage) {
         this.onBack = onBack;
+        this.onOpenBag = onOpenBag;
+        this.onStartStage = onStartStage;
         setLayout(new BorderLayout(14, 0));
         setBackground(new Color(18, 57, 55));
         setBorder(BorderFactory.createEmptyBorder(14, 14, 14, 14));
@@ -107,6 +120,7 @@ public final class WorldMapPanel extends JPanel {
         add(mapCanvas, BorderLayout.CENTER);
         add(createSidebar(), BorderLayout.EAST);
         setPreferredSize(new Dimension(960, 540));
+        refreshProgressionControls();
     }
 
     /** Supplies the current player portrait used for the moving map marker. */
@@ -114,6 +128,14 @@ public final class WorldMapPanel extends JPanel {
         mapCanvas.setTrainerArt(portrait);
         trainerName.setText("TRAINER  ·  " + (name == null ? "ADVENTURER" : name.toUpperCase()));
         repaint();
+    }
+
+    /** Progress values are the highest cleared stage in each region, from 0 to 30. */
+    public void setProgress(int[] progress) {
+        Arrays.fill(completedStages, 0);
+        if (progress != null) System.arraycopy(progress, 0, completedStages, 0, Math.min(progress.length, completedStages.length));
+        refreshProgressionControls();
+        mapCanvas.repaint();
     }
 
     private void createLocations() {
@@ -190,7 +212,7 @@ public final class WorldMapPanel extends JPanel {
         second.neighbors.add(firstId);
     }
 
-    private JPanel createSidebar() {
+    private javax.swing.JScrollPane createSidebar() {
         JPanel sidebar = new JPanel();
         sidebar.setLayout(new BoxLayout(sidebar, BoxLayout.Y_AXIS));
         sidebar.setBackground(new Color(244, 246, 226));
@@ -245,6 +267,32 @@ public final class WorldMapPanel extends JPanel {
             sidebar.add(Box.createVerticalStrut(6));
         }
 
+        sidebar.add(Box.createVerticalStrut(8));
+        stageHeader.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 11));
+        stageHeader.setForeground(GREEN);
+        stageHeader.setAlignmentX(LEFT_ALIGNMENT);
+        stageProgress.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 11));
+        stageProgress.setForeground(new Color(100, 111, 100));
+        stageProgress.setAlignmentX(LEFT_ALIGNMENT);
+        stagesGrid.setOpaque(false);
+        stagesGrid.setAlignmentX(LEFT_ALIGNMENT);
+        stagesGrid.setMaximumSize(new Dimension(Integer.MAX_VALUE, 168));
+        for (int stage = 1; stage <= 30; stage++) {
+            int stageNumber = stage;
+            JButton stageButton = new JButton();
+            stageButton.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 10));
+            stageButton.setMargin(new java.awt.Insets(3, 0, 3, 0));
+            stageButton.setFocusPainted(false);
+            stageButton.addActionListener(event -> onStartStage.accept(selectedRegion, stageNumber));
+            stageButtons.add(stageButton);
+            stagesGrid.add(stageButton);
+        }
+        sidebar.add(stageHeader);
+        sidebar.add(Box.createVerticalStrut(3));
+        sidebar.add(stageProgress);
+        sidebar.add(Box.createVerticalStrut(6));
+        sidebar.add(stagesGrid);
+
         sidebar.add(Box.createVerticalStrut(9));
         JPanel infoCard = new JPanel();
         infoCard.setLayout(new BoxLayout(infoCard, BoxLayout.Y_AXIS));
@@ -253,7 +301,7 @@ public final class WorldMapPanel extends JPanel {
             BorderFactory.createLineBorder(new Color(185, 204, 166)),
             BorderFactory.createEmptyBorder(12, 12, 12, 12)));
         infoCard.setAlignmentX(LEFT_ALIGNMENT);
-        infoCard.setMaximumSize(new Dimension(Integer.MAX_VALUE, 128));
+        infoCard.setMaximumSize(new Dimension(Integer.MAX_VALUE, 110));
         JLabel here = new JLabel("CURRENT LOCATION");
         here.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 10));
         here.setForeground(GREEN);
@@ -270,6 +318,17 @@ public final class WorldMapPanel extends JPanel {
         infoCard.add(description);
         sidebar.add(infoCard);
 
+        sidebar.add(Box.createVerticalStrut(8));
+        JButton bag = new JButton("🎒  Open Bag");
+        bag.setFont(BODY_BOLD);
+        bag.setForeground(INK);
+        bag.setBackground(new Color(224, 237, 249));
+        bag.setFocusPainted(false);
+        bag.setAlignmentX(LEFT_ALIGNMENT);
+        bag.setMaximumSize(new Dimension(Integer.MAX_VALUE, 38));
+        bag.addActionListener(event -> onOpenBag.run());
+        sidebar.add(bag);
+
         sidebar.add(Box.createVerticalGlue());
         JButton back = new JButton("←  Back");
         back.setFont(BODY_BOLD);
@@ -285,12 +344,55 @@ public final class WorldMapPanel extends JPanel {
             onBack.run();
         });
         sidebar.add(back);
-        return sidebar;
+        javax.swing.JScrollPane scroll = new javax.swing.JScrollPane(sidebar);
+        scroll.setBorder(BorderFactory.createEmptyBorder());
+        scroll.setPreferredSize(new Dimension(310, 0));
+        scroll.getVerticalScrollBar().setUnitIncrement(20);
+        scroll.getViewport().setBackground(new Color(244, 246, 226));
+        return scroll;
+    }
+
+    private void refreshProgressionControls() {
+        int unlockedRegion = 0;
+        while (unlockedRegion + 1 < completedStages.length && completedStages[unlockedRegion] >= 30) unlockedRegion++;
+        int regionIndex = 0;
+        for (JButton button : destinationButtons) {
+            boolean unlocked = regionIndex <= unlockedRegion;
+            button.setEnabled(unlocked);
+            button.setText(String.format("%02d   %s%s", regionIndex + 1,
+                new ArrayList<>(locations.values()).get(regionIndex).name, unlocked ? "" : "   🔒"));
+            regionIndex++;
+        }
+        Location selected = new ArrayList<>(locations.values()).get(selectedRegion);
+        stageHeader.setText((selectedRegion + 1) + " · " + selected.name.toUpperCase() + " · LEVELS");
+        stageProgress.setText(completedStages[selectedRegion] + " / 30 complete" + (completedStages[selectedRegion] >= 30 ? "  ·  AREA CLEARED" : ""));
+        boolean regionUnlocked = selectedRegion <= unlockedRegion;
+        for (int i = 0; i < stageButtons.size(); i++) {
+            int stage = i + 1;
+            JButton button = stageButtons.get(i);
+            boolean boss = stage % 5 == 0;
+            boolean available = regionUnlocked && stage <= completedStages[selectedRegion] + 1;
+            button.setText((selectedRegion + 1) + "." + stage + (boss ? " ★" : ""));
+            button.setEnabled(available && standingAtSelectedRegion);
+            button.setBackground(boss ? new Color(255, 235, 203) : new Color(255, 255, 255));
+            button.setForeground(available ? INK : new Color(140, 147, 137));
+            button.setToolTipText(boss ? "Strong beast and a harder ethics dilemma" : "Stage " + (selectedRegion + 1) + "." + stage);
+        }
+        for (JButton button : destinationButtons) button.repaint();
     }
 
     private void travelTo(String destination) {
         Location target = locations.get(destination);
         if (target == null) return;
+        int region = new ArrayList<>(locations.values()).indexOf(target);
+        if (!isRegionUnlocked(region)) {
+            selectedLocation.setText("Region locked");
+            description.setText("<html>Clear all 30 levels in the previous region to unlock this road.</html>");
+            return;
+        }
+        selectedRegion = region;
+        standingAtSelectedRegion = false;
+        refreshProgressionControls();
         selectedLocation.setText("Traveling to " + target.name + "…");
         description.setText("<html>Following the King's Road to " + target.name + ".</html>");
         mapCanvas.moveTo(target);
@@ -299,6 +401,13 @@ public final class WorldMapPanel extends JPanel {
     private void arriveAt(Location location) {
         selectedLocation.setText(location.name);
         description.setText("<html>" + location.description + "</html>");
+        selectedRegion = new ArrayList<>(locations.values()).indexOf(location);
+        standingAtSelectedRegion = true;
+        refreshProgressionControls();
+    }
+
+    private boolean isRegionUnlocked(int region) {
+        return region == 0 || (region > 0 && completedStages[region - 1] >= 30);
     }
 
     private final class MapCanvas extends JPanel {
@@ -361,7 +470,10 @@ public final class WorldMapPanel extends JPanel {
             for (Location location : locations.values()) {
                 double dx = clickedX - location.x;
                 double dy = clickedY - location.y;
-                if (Math.hypot(dx, dy) <= 3.4) return location;
+                if (Math.hypot(dx, dy) <= 3.4) {
+                    int region = new ArrayList<>(locations.values()).indexOf(location);
+                    return isRegionUnlocked(region) ? location : null;
+                }
             }
             return null;
         }

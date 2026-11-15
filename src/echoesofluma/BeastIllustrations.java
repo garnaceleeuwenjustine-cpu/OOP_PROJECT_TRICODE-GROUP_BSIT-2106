@@ -25,7 +25,9 @@ public final class BeastIllustrations {
                     if (resource != null) image = ImageIO.read(resource);
                 }
             }
-            return image == null ? null : clearConnectedWhiteBackground(image);
+            if (image == null) return null;
+            BufferedImage cutout = clearConnectedWhiteBackground(image);
+            return hasVisiblePixels(cutout) ? cutout : image;
         } catch (IOException | RuntimeException ignored) {
             // The game remains launchable if an optional image is missing.
             return null;
@@ -90,6 +92,14 @@ public final class BeastIllustrations {
         int blue = pixel & 0xff;
         int spread = Math.max(red, Math.max(green, blue)) - Math.min(red, Math.min(green, blue));
         return alpha > 8 && red >= 244 && green >= 244 && blue >= 244 && spread <= 16;
+    }
+
+    private static boolean hasVisiblePixels(BufferedImage image) {
+        int width = image.getWidth(), height = image.getHeight();
+        int[] pixels = image.getRGB(0, 0, width, height, null, 0, width);
+        int visible = 0;
+        for (int pixel : pixels) if (((pixel >>> 24) & 0xff) > 32) visible++;
+        return visible >= Math.max(1, pixels.length / 50);
     }
 
     public static void draw(Graphics2D graphics, BufferedImage image,
