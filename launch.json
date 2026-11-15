@@ -1,0 +1,16 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "java",
+      "name": "Run Echoes of Luma",
+      "request": "launch",
+      "mainClass": "Main",
+      "cwd": "${workspaceFolder}",
+      "classPaths": [
+        "${workspaceFolder}/out"
+      ],
+      "preLaunchTask": "Build Echoes of Luma Battle Demo"
+    }
+  ]
+}
