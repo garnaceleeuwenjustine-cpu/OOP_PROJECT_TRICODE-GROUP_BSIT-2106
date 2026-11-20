@@ -28,6 +28,7 @@ import java.awt.FontMetrics;
 import java.awt.GradientPaint;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
+import java.awt.KeyboardFocusManager;
 import java.awt.RenderingHints;
 import java.awt.event.ActionEvent;
 import java.awt.event.KeyAdapter;
@@ -522,6 +523,7 @@ public final class BattleDemo {
         loadBattleBackground("ethics-academy.png")
     };
     private final BufferedImage titleScreenArt = loadTitleScreenArt();
+    private final OpeningScene openingScene = new OpeningScene();
 
     private BattleDemo() {
         SAVE.load();
@@ -544,7 +546,9 @@ public final class BattleDemo {
         cards.add(moveCard, "moves");
         cards.add(stageResultCard, "stage-result");
         showCard("select");
+        GameAudio.installUiSounds();
 
+        screenCards.add(openingScene, "opening");
         screenCards.add(mainMenu, "title");
         screenCards.add(inGameMenu, "in-game-menu");
         screenCards.add(trainerSelection, "trainer");
@@ -566,6 +570,13 @@ public final class BattleDemo {
         screenCards.getActionMap().put("escape-game-menu", new AbstractAction() {
             @Override public void actionPerformed(ActionEvent event) { escapeGameMenu(); }
         });
+        KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher(event -> {
+            if ("opening".equals(activeScreen) && event.getID() == KeyEvent.KEY_PRESSED) {
+                openingScene.skipToTitle();
+                return true;
+            }
+            return false;
+        });
         trainerSelection.backButton.addActionListener(e -> showScreen("title"));
 
         playerChoice.addActionListener(e -> { updateSelectedPreview(); updateSelectionHint(); });
@@ -573,7 +584,7 @@ public final class BattleDemo {
         modeChoice.addActionListener(e -> updateCaptureRule());
         arena.startClock();
         frame.setContentPane(screenCards);
-        showScreen("title");
+        showScreen("opening");
         frame.setVisible(true);
     }
 
@@ -602,6 +613,7 @@ public final class BattleDemo {
     private void showScreen(String name) {
         activeScreen = name;
         ((java.awt.CardLayout) screenCards.getLayout()).show(screenCards, name);
+        if ("opening".equals(name)) openingScene.begin();
         mainMenu.refreshButtons();
         frame.revalidate();
         frame.repaint();
@@ -632,6 +644,7 @@ public final class BattleDemo {
         worldMapReturnScreen = returnScreen;
         worldMapPanel.setTrainer(activeTrainer.art, activeTrainer.title);
         worldMapPanel.setProgress(SAVE.completedStages);
+        GameAudio.play(GameAudio.Cue.OPEN);
         showScreen("world-map");
     }
 
@@ -643,6 +656,7 @@ public final class BattleDemo {
         bagPanel.setBackLabel("Return to World Map");
         bagPanel.selectTab(0);
         syncGameProgressToPack();
+        GameAudio.play(GameAudio.Cue.OPEN);
         showScreen("bag");
     }
 
@@ -668,6 +682,7 @@ public final class BattleDemo {
         bagPanel.setBackLabel("Return to Game Menu");
         bagPanel.selectTab(tab);
         syncGameProgressToPack();
+        GameAudio.play(GameAudio.Cue.OPEN);
         showScreen("bag");
     }
 
@@ -680,6 +695,7 @@ public final class BattleDemo {
         bagPanel.setBackLabel("Back to Battle");
         bagPanel.selectTab(0);
         syncGameProgressToPack();
+        GameAudio.play(GameAudio.Cue.OPEN);
         showScreen("bag");
     }
 
@@ -726,6 +742,7 @@ public final class BattleDemo {
     private void openInGameMenu() {
         pauseReturnScreen = activeScreen;
         inGameMenu.refreshMenu();
+        GameAudio.play(GameAudio.Cue.OPEN);
         showScreen("in-game-menu");
     }
 
@@ -872,6 +889,7 @@ public final class BattleDemo {
         SAVE.storyComplete = true;
         SAVE.bagLevel = 1;
         SAVE.save();
+        GameAudio.play(GameAudio.Cue.START);
         playerChoice.setSelectedItem(starter);
         updateSelectedPreview();
         syncGameProgressToPack();
@@ -892,9 +910,14 @@ public final class BattleDemo {
     }
 
     private void showSettings() {
-        JOptionPane.showMessageDialog(frame,
-        "CONTROLS\n\nPress M or Escape during play to open or close the game menu.\nUse Bag & Items from the menu, or choose Bag during battle to use an item.\nPress 1, 2, or 3 to answer an ethics question.\nPress 1-8 to choose a capsule; Escape cancels capsule selection.\nPress Enter, Space, or Z to continue dialogue.\n\nEvery beast has five type-based moves. XP is awarded after a win or catch, never for quiz answers.",
-            "Echoes of Luma — Settings & Controls", JOptionPane.INFORMATION_MESSAGE);
+        String controls = "CONTROLS\n\nPress M or Escape during play to open or close the game menu.\nUse Bag & Items from the menu, or choose Bag during battle to use an item.\nPress 1, 2, or 3 to answer an ethics question.\nPress 1-8 to choose a capsule; Escape cancels capsule selection.\nPress Enter, Space, or Z to continue dialogue.\n\nEvery beast has five type-based moves. XP is awarded after a win or catch, never for quiz answers.\n\nButtons, attacks, capsules, and battle results have original retro sound effects.";
+        Object[] options = {"Sound: " + (GameAudio.isEnabled() ? "On" : "Off"), "Close"};
+        int choice = JOptionPane.showOptionDialog(frame, controls, "Echoes of Luma — Settings & Controls",
+            JOptionPane.DEFAULT_OPTION, JOptionPane.INFORMATION_MESSAGE, null, options, options[1]);
+        if (choice == 0) {
+            GameAudio.toggle();
+            if (GameAudio.isEnabled()) GameAudio.play(GameAudio.Cue.CLICK);
+        }
     }
 
     private void showLearningJournal() {
@@ -953,6 +976,7 @@ public final class BattleDemo {
         arena.phase = Phase.ANIMATING;
         arena.frameNo = 0;
         arena.message = notice;
+        GameAudio.play(GameAudio.Cue.HEAL);
         setActionsEnabled(false);
         arena.repaint();
         return true;
@@ -1215,6 +1239,325 @@ public final class BattleDemo {
             selectionNote.setText("Ready to battle with " + beast.name + " · Lv. " + SAVE.level(beast) + " · " + beast.types());
             beginButton.setText("Battle with " + beast.name);
             beginButton.setEnabled(true);
+        }
+    }
+
+    /** A short, cinematic adventure opening before the title menu. */
+    private final class OpeningScene extends JPanel {
+        private static final int SCENE_LENGTH = 80;
+        private final BufferedImage[] shots = {
+            new BufferedImage(960, 540, BufferedImage.TYPE_INT_RGB),
+            battleBackgrounds[0],
+            battleBackgrounds[4],
+            titleScreenArt
+        };
+        private final String[] speakers = {
+            "LUMA STUDIO PRESENTS",
+            "A WORLD OF UNWRITTEN ECHOES",
+            "CHOOSE YOUR FIRST PARTNER",
+            "ECHOES OF LUMA"
+        };
+        private final String[] captions = {
+            "AN ORIGINAL BEAST TRAINER ADVENTURE",
+            "A lost echo calls beyond the forest.",
+            "Grass. Fire. Water. Your journey starts here.",
+            "Catch. Learn. Grow."
+        };
+        private final Beast[] openingFeaturedBeasts = { ROSTER[2] };
+        private final Timer animation = new Timer(35, event -> advanceOpening());
+        private int frame;
+        private int sceneIndex;
+
+        OpeningScene() {
+            setFocusable(true);
+            setBackground(new Color(6, 22, 38));
+            addMouseListener(new MouseAdapter() {
+                @Override public void mousePressed(MouseEvent event) { skipToTitle(); }
+            });
+            addKeyListener(new KeyAdapter() {
+                @Override public void keyPressed(KeyEvent event) { skipToTitle(); }
+            });
+        }
+
+        void begin() {
+            frame = 0;
+            sceneIndex = 0;
+            GameAudio.startOpeningTheme();
+            animation.start();
+            SwingUtilities.invokeLater(this::requestFocusInWindow);
+        }
+
+        private void advanceOpening() {
+            if (!"opening".equals(activeScreen)) {
+                animation.stop();
+                return;
+            }
+            frame++;
+            int nextScene = Math.min(shots.length - 1, frame / SCENE_LENGTH);
+            if (nextScene != sceneIndex) sceneIndex = nextScene;
+            repaint();
+        }
+
+        private void skipToTitle() {
+            if (!"opening".equals(activeScreen)) return;
+            animation.stop();
+            GameAudio.stopOpeningTheme();
+            GameAudio.play(GameAudio.Cue.CLICK);
+            showScreen("title");
+        }
+
+        @Override protected void paintComponent(Graphics graphics) {
+            super.paintComponent(graphics);
+            Graphics2D g = (Graphics2D) graphics.create();
+            double scale = Math.min(getWidth() / 960.0, getHeight() / 540.0);
+            int offsetX = (int) ((getWidth() - 960 * scale) / 2);
+            int offsetY = (int) ((getHeight() - 540 * scale) / 2);
+            g.translate(offsetX, offsetY);
+            g.scale(scale, scale);
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+            drawCinematic(g);
+            g.dispose();
+        }
+
+        private void drawCinematic(Graphics2D g) {
+            g.setPaint(new GradientPaint(0, 0, new Color(18, 58, 99), 0, 540, new Color(3, 20, 40)));
+            g.fillRect(0, 0, 960, 540);
+            int sceneAge = frame - sceneIndex * SCENE_LENGTH;
+            if (sceneIndex > 0 && sceneAge < 18) drawShot(g, shots[sceneIndex - 1], sceneIndex - 1, 1f);
+            float reveal = sceneIndex == 0 ? Math.min(1f, frame / 20f) : Math.min(1f, sceneAge / 18f);
+            drawShot(g, shots[sceneIndex], sceneIndex, reveal);
+
+            int fade = (int) (150 * (1.0 - Math.min(1.0, frame / 34.0)));
+            if (fade > 0) {
+                g.setColor(new Color(2, 12, 28, fade));
+                g.fillRect(0, 0, 960, 540);
+            }
+            g.setPaint(new GradientPaint(0, 330, new Color(4, 18, 34, 0), 0, 540, new Color(3, 17, 34, 205)));
+            g.fillRect(0, 310, 960, 230);
+
+            int bars = Math.min(38, frame * 2);
+            g.setColor(new Color(2, 8, 19, 245));
+            g.fillRect(0, 0, 960, bars);
+            g.fillRect(0, 540 - bars, 960, bars);
+
+            drawOpeningTrainer(g, sceneAge);
+            drawOpeningBeasts(g, sceneAge);
+            drawCinematicCaption(g, sceneAge);
+            drawTitleGlints(g);
+            if (sceneIndex == shots.length - 1 && sceneAge >= 24) {
+                int pulse = (int) (170 + 85 * (0.5 + 0.5 * Math.sin(frame * .12)));
+                g.setColor(new Color(178, 239, 243, pulse));
+                g.setStroke(new BasicStroke(1.5f));
+                g.drawRoundRect(350, 470, 260, 34, 17, 17);
+                PixelBitmapFont.drawCentered(g, "PRESS ANY KEY OR CLICK", 480, 482, 245, 1,
+                    new Color(248, 252, 237, pulse));
+            }
+        }
+
+        private void drawOpeningTrainer(Graphics2D g, int sceneAge) {
+            if (sceneIndex >= shots.length - 1 || activeTrainer.art == null) return;
+            double walk = sceneIndex == 0 ? Math.min(1.0, sceneAge / 66.0) : 1.0;
+            walk = walk * walk * (3.0 - 2.0 * walk);
+            int x = sceneIndex == 0 ? (int) (-106 + 205 * walk) : 92 + (int) (Math.sin(sceneAge * .045) * 5);
+            int bob = (int) (Math.sin(frame * .19) * 3);
+            g.setColor(new Color(5, 18, 27, 115));
+            g.fillOval(x + 12, 473, 100, 13);
+            BeastIllustrations.draw(g, activeTrainer.art, x, 209 + bob, 118, 267, 1f, false);
+        }
+
+        private void drawOpeningBeasts(Graphics2D g, int sceneAge) {
+            if (sceneIndex == 2) {
+                drawStarterTrio(g, sceneAge);
+                return;
+            }
+            int featuredIndex = switch (sceneIndex) {
+                case 0 -> 0;
+                case 1 -> 1;
+                case 3 -> 2;
+                default -> -1;
+            };
+            if (featuredIndex < 0) return;
+            Beast beast = openingFeaturedBeasts[featuredIndex];
+            if (beast == null || beast.sprite == null) return;
+
+            int centerX = sceneIndex == 3 ? 742 : 734;
+            int bob = (int) (Math.sin(frame * .13 + featuredIndex * 1.8) * 4);
+            g.setColor(new Color(6, 18, 25, 110));
+            g.fillOval(centerX - 60, 431, 120, 13);
+            Graphics2D creature = (Graphics2D) g.create();
+            creature.rotate(Math.sin(frame * .055 + featuredIndex) * .018, centerX, 345 + bob);
+            // The featured Beast faces inward toward the trainer.
+            BeastIllustrations.draw(creature, beast.sprite, centerX - 86, 232 + bob,
+                172, 202, 1f, beast.facesRightInSource);
+            creature.dispose();
+        }
+        private void drawStarterTrio(Graphics2D g, int sceneAge) {
+            int[] centers = {355, 535, 715};
+            for (int i = 0; i < 3; i++) {
+                Beast beast = ROSTER[i];
+                float alpha = Math.max(0f, Math.min(1f, (sceneAge - i * 10) / 17f));
+                if (alpha <= 0) continue;
+                int centerX = centers[i];
+                int bob = (int) (Math.sin(frame * .16 + i * 1.9) * 7);
+                float auraAlpha = Math.min(.42f, alpha * .42f);
+                Color type = typeColor(beast.firstType);
+                Graphics2D aura = (Graphics2D) g.create();
+                aura.setPaint(new RadialGradientPaint(new Point2D.Float(centerX, 397 + bob), 86f,
+                    new float[] {0f, .55f, 1f}, new Color[] {
+                        new Color(type.getRed(), type.getGreen(), type.getBlue(), (int) (100 * auraAlpha)),
+                        new Color(type.getRed(), type.getGreen(), type.getBlue(), (int) (45 * auraAlpha)),
+                        new Color(type.getRed(), type.getGreen(), type.getBlue(), 0)
+                    }));
+                aura.fill(new Ellipse2D.Double(centerX - 86, 311 + bob, 172, 172));
+                aura.dispose();
+
+                g.setColor(new Color(5, 18, 25, (int) (95 * alpha)));
+                g.fillOval(centerX - 54, 421 + bob, 108, 12);
+                Graphics2D partner = (Graphics2D) g.create();
+                partner.translate(centerX, 369 + bob);
+                partner.rotate(Math.sin(frame * .11 + i) * .025);
+                double scale = 1 + .035 * Math.sin(frame * .15 + i * 1.7);
+                partner.scale(scale, scale);
+                BeastIllustrations.draw(partner, beast.sprite, -72, -74, 144, 148, alpha, false);
+                partner.dispose();
+            }
+        }
+
+        private void drawShot(Graphics2D g, BufferedImage image, int shot, float alpha) {
+            if (image == null || alpha <= 0) return;
+            int sceneAge = frame - shot * SCENE_LENGTH;
+            double cover = Math.max(960.0 / image.getWidth(), 540.0 / image.getHeight());
+            double zoom = sceneIndex == shots.length - 1 ? 1.08 + .025 * Math.sin(frame * .035) : 1.04 + .12 * Math.min(1.0, sceneAge / (double) SCENE_LENGTH) + .012 * Math.sin((sceneAge + shot * 11) * .04);
+            int width = (int) (image.getWidth() * cover * zoom);
+            int height = (int) (image.getHeight() * cover * zoom);
+            double driftX = Math.sin(sceneAge * .018 + shot * 1.3) * (sceneIndex == shots.length - 1 ? 7 : 30);
+            double driftY = Math.cos(sceneAge * .014 + shot) * 6;
+            Graphics2D imageLayer = (Graphics2D) g.create();
+            imageLayer.setComposite(AlphaComposite.SrcOver.derive(Math.max(0f, Math.min(1f, alpha))));
+            imageLayer.drawImage(image, (int) ((960 - width) / 2 + driftX),
+                (int) ((540 - height) / 2 + driftY), width, height, null);
+            imageLayer.dispose();
+        }
+
+        private void drawCinematicCaption(Graphics2D g, int sceneAge) {
+            int fadeIn = Math.min(255, sceneAge * 20);
+            int fadeOut = sceneIndex == shots.length - 1 ? 255 : Math.min(255, (SCENE_LENGTH - sceneAge) * 20);
+            int alpha = Math.min(fadeIn, fadeOut);
+            if (alpha <= 0) return;
+            g.setColor(new Color(4, 18, 33, alpha * 3 / 5));
+            g.fillRoundRect(224, 423, 700, 38, 14, 14);
+            g.setColor(new Color(143, 224, 226, alpha));
+            g.setStroke(new BasicStroke(1.4f));
+            g.drawLine(245, 423, 903, 423);
+            PixelBitmapFont.drawCentered(g, captions[sceneIndex], 574, 434, 650, 1,
+                new Color(252, 250, 226, alpha));
+        }
+
+        private void drawOpeningAtmosphere(Graphics2D g, int sceneAge) {
+            Color mote = switch (sceneIndex) {
+                case 0, 1 -> new Color(178, 238, 151, 145);
+                case 3 -> new Color(255, 157, 84, 165);
+                case 4 -> new Color(118, 225, 255, 155);
+                default -> new Color(223, 248, 255, 140);
+            };
+            for (int i = 0; i < 28; i++) {
+                int x = Math.floorMod(i * 167 + frame * (1 + i % 3), 960);
+                int y = 92 + Math.floorMod(i * 89 - frame * (1 + i % 2), 365);
+                int size = i % 5 == 0 ? 5 : 3;
+                int alpha = Math.max(22, Math.min(190, mote.getAlpha() + (int) (45 * Math.sin(frame * .09 + i))));
+                g.setColor(new Color(mote.getRed(), mote.getGreen(), mote.getBlue(), alpha));
+                if ((sceneIndex < 2 || sceneIndex == 5) && i % 3 == 0) {
+                    Graphics2D leaf = (Graphics2D) g.create();
+                    leaf.rotate(Math.sin(frame * .035 + i) * .7, x, y);
+                    leaf.fill(new Ellipse2D.Double(x - size * 2, y - size, size * 4, size * 2));
+                    leaf.dispose();
+                } else {
+                    g.fillOval(x, y, size, size);
+                }
+            }
+            if (sceneIndex == 1 || sceneIndex == 4) {
+                int pulse = Math.floorMod(sceneAge, 70);
+                int radius = 26 + pulse * 3;
+                int alpha = Math.max(0, 135 - pulse * 4);
+                if (alpha > 0) {
+                    g.setColor(new Color(108, 229, 244, alpha));
+                    g.setStroke(new BasicStroke(2.2f));
+                    g.drawOval(478 - radius, 330 - radius / 2, radius * 2, radius);
+                    int innerRadius = Math.max(8, radius - 20);
+                    g.drawOval(478 - innerRadius, 330 - innerRadius / 2, innerRadius * 2, innerRadius);
+                }
+            }
+            if (sceneIndex == 4) {
+                g.setColor(new Color(5, 34, 56, 180));
+                g.fillRoundRect(666, 91, 246, 70, 8, 8);
+                g.setColor(new Color(128, 219, 230, 210));
+                g.setStroke(new BasicStroke(1.5f));
+                g.drawRoundRect(666, 91, 246, 70, 8, 8);
+                PixelBitmapFont.drawCentered(g, "ETHICS TRIAL  ·  01", 789, 105, 222, 1, Color.WHITE);
+                PixelBitmapFont.drawCentered(g, "LISTEN BEFORE YOU CHOOSE", 789, 128, 222, 1,
+                    new Color(182, 240, 218));
+            }
+        }
+
+        private void drawOpeningAction(Graphics2D g, int sceneAge) {
+            if (sceneIndex != 1) return;
+            int flightStart = 17;
+            int flightLength = 28;
+            if (sceneAge >= flightStart && sceneAge <= flightStart + flightLength) {
+                double t = (sceneAge - flightStart) / (double) flightLength;
+                int x = (int) (180 + t * 510);
+                int y = (int) (375 - Math.sin(t * Math.PI) * 95);
+                for (int i = 5; i >= 1; i--) {
+                    int trailX = x - i * 12;
+                    int trailY = y + i * 2;
+                    g.setColor(new Color(123, 230, 248, Math.max(12, 100 - i * 16)));
+                    g.fillOval(trailX - i, trailY - i, i * 2, i * 2);
+                }
+                drawOpeningCapsule(g, x, y, t * 7.0);
+            }
+            if (sceneAge >= 43 && sceneAge <= 57) {
+                int pulse = sceneAge - 43;
+                int radius = 18 + pulse * 11;
+                int alpha = Math.max(0, 190 - pulse * 12);
+                g.setColor(new Color(223, 255, 250, alpha / 2));
+                g.fillOval(742 - radius, 330 - radius, radius * 2, radius * 2);
+                g.setColor(new Color(130, 239, 247, alpha));
+                g.setStroke(new BasicStroke(3f));
+                g.drawOval(742 - radius, 330 - radius, radius * 2, radius * 2);
+            }
+        }
+
+        private void drawOpeningCapsule(Graphics2D g, int centerX, int centerY, double angle) {
+            Graphics2D capsule = (Graphics2D) g.create();
+            capsule.rotate(angle, centerX, centerY);
+            capsule.setColor(new Color(3, 23, 43, 230));
+            capsule.fillRoundRect(centerX - 11, centerY - 17, 22, 34, 12, 12);
+            capsule.setPaint(new GradientPaint(centerX - 8, centerY - 15, new Color(135, 245, 242),
+                centerX + 7, centerY + 1, new Color(36, 148, 211)));
+            capsule.fillRoundRect(centerX - 8, centerY - 14, 16, 15, 8, 8);
+            capsule.setColor(new Color(237, 250, 244));
+            capsule.fillRoundRect(centerX - 8, centerY, 16, 13, 7, 7);
+            capsule.setColor(new Color(5, 39, 63));
+            capsule.fillRect(centerX - 10, centerY - 2, 20, 4);
+            capsule.setColor(new Color(205, 255, 248));
+            capsule.fillOval(centerX - 3, centerY - 4, 6, 6);
+            capsule.dispose();
+        }
+
+        private void drawTitleGlints(Graphics2D g) {
+            for (int i = 0; i < 16; i++) {
+                int x = Math.floorMod(i * 173 + frame * (1 + i % 3), 960);
+                int y = 55 + Math.floorMod(i * 97 - frame / 2, 330);
+                int pulse = (int) (24 + 52 * (0.5 + 0.5 * Math.sin(frame * .1 + i * 1.4)));
+                g.setColor(new Color(216, 250, 242, pulse));
+                int diameter = i % 4 == 0 ? 4 : 2;
+                g.fillOval(x, y, diameter, diameter);
+                if (i % 4 == 0) {
+                    g.drawLine(x - 4, y + 2, x + 7, y + 2);
+                    g.drawLine(x + 2, y - 4, x + 2, y + 7);
+                }
+            }
         }
     }
 
@@ -1911,6 +2254,7 @@ public final class BattleDemo {
             arena.opponentTrainer = opponents[opponentIndex];
         }
         arena.phase = Phase.THROWING_CAPSULE;
+        GameAudio.play(GameAudio.Cue.CAPSULE_THROW);
         arena.recallAfterThrow = false;
         arena.frameNo = 0;
         arena.message = "{C:#2C765B}{PLAYER}{/C} throws out {ALLY}!";
@@ -1975,6 +2319,7 @@ public final class BattleDemo {
         for (int i = 0; i < moveButtons.length; i++) {
             Move move = player.moves.get(i);
             String tag = switch (move.kind) { case DAMAGE -> "ATTACK"; case BUFF -> "SELF BUFF"; case DEBUFF -> "ENEMY DEBUFF"; };
+            GameAudio.setMoveButtonType(moveButtons[i], move.type);
             moveButtons[i].setText("<html><center>" + move.name + "<br><span style='font-weight:normal'>" + move.type + "  ·  " + tag + "</span></center></html>");
             moveButtons[i].setToolTipText(move.effect);
             moveButtons[i].setEnabled(arena.phase == Phase.COMMAND || arena.phase == Phase.MOVE_SELECT);
@@ -2001,6 +2346,7 @@ public final class BattleDemo {
         arena.potions = bagPanel.getItemCount(CreaturePC.ItemId.POTION);
         updateBagLabel();
         arena.player.hp = Math.min(arena.player.maxHp, arena.player.hp + 32);
+        GameAudio.play(GameAudio.Cue.HEAL);
         arena.effectKind = Kind.BUFF; arena.effectActor = arena.player; arena.phase = Phase.ANIMATING; arena.frameNo = 0;
         arena.message = "Potion restored 32 HP. " + arena.potions + " left.";
         setActionsEnabled(false);
@@ -2057,6 +2403,7 @@ public final class BattleDemo {
         }
         arena.capsulePickerNotice = "";
         arena.selectedCapsule = capsuleType;
+        GameAudio.play(GameAudio.Cue.CAPSULE_THROW);
         arena.phase = Phase.ANIMATING; arena.frameNo = 0; arena.capturing = true;
         double chance = arena.captureChance(capsuleType);
         arena.captureChanceAtThrow = (int) Math.round(chance * 100);
@@ -2148,6 +2495,7 @@ public final class BattleDemo {
         private String lastDialogText = "";
         private Phase lastDialogPhase;
         private int visibleDialogChars;
+        private int typewriterSoundCounter;
         private boolean dialogDismissed;
         private final Random random = new Random(7);
 
@@ -2158,6 +2506,7 @@ public final class BattleDemo {
             setFocusable(true);
             addMouseListener(new MouseAdapter() {
                 @Override public void mousePressed(MouseEvent e) {
+                    GameAudio.play(GameAudio.Cue.CLICK);
                     requestFocusInWindow();
                     int[] point = toVirtual(e.getX(), e.getY());
                     if (isDialogActive() && point[0] >= 16 && point[0] <= 944 && point[1] >= 447 && point[1] <= 526) {
@@ -2183,6 +2532,7 @@ public final class BattleDemo {
                     } else if (phase == Phase.ETHICS_FEEDBACK && (e.getKeyCode() == KeyEvent.VK_SPACE || e.getKeyCode() == KeyEvent.VK_ENTER || e.getKeyCode() == KeyEvent.VK_Z)) {
                         continueAfterEthics();
                     } else if (isDialogActive() && (e.getKeyCode() == KeyEvent.VK_SPACE || e.getKeyCode() == KeyEvent.VK_ENTER || e.getKeyCode() == KeyEvent.VK_Z)) {
+                        GameAudio.play(GameAudio.Cue.CLICK);
                         advanceDialog();
                     } else if (phase == Phase.ATTUNE_INPUT) {
                         int key = e.getKeyCode();
@@ -2215,6 +2565,7 @@ public final class BattleDemo {
                 lastDialogPhase = phase;
                 lastDialogText = text;
                 visibleDialogChars = 0;
+                typewriterSoundCounter = 0;
                 dialogDismissed = false;
             }
         }
@@ -2256,6 +2607,7 @@ public final class BattleDemo {
             }
             enteredEcho.clear();
             phase = Phase.ATTUNE_REVEAL;
+            GameAudio.play(GameAudio.Cue.ATTUNE);
             frameNo = 0;
             message = "Watch the three-beat Echo.";
             menuFocus = 0;
@@ -2337,6 +2689,7 @@ public final class BattleDemo {
         private void answerEthics(int answerIndex) {
             if (phase != Phase.ETHICS_QUESTION || currentQuestion == null) return;
             ethicsCorrect = answerIndex == currentQuestion.correctIndex;
+            GameAudio.play(ethicsCorrect ? GameAudio.Cue.CORRECT : GameAudio.Cue.INCORRECT);
             ethicsQuestionsAnswered++;
             phase = Phase.ETHICS_FEEDBACK;
             frameNo = 0;
@@ -2347,6 +2700,7 @@ public final class BattleDemo {
         private void continueAfterEthics() {
             if (phase != Phase.ETHICS_FEEDBACK || pendingMove == null) return;
             if (ethicsCorrect) {
+                if (pendingMove.kind == Kind.DAMAGE) GameAudio.play(GameAudio.attackCue(pendingMove.type));
                 move = pendingMove;
                 pendingMove = null;
                 effectActor = player;
@@ -2376,12 +2730,16 @@ public final class BattleDemo {
             phase = Phase.THROWING_CAPSULE;
             frameNo = 0;
             message = "{C:#2C765B}{PLAYER}{/C} throws a capsule to recall {ALLY}!";
+            GameAudio.play(GameAudio.Cue.CAPSULE_THROW);
             setActionsEnabled(false);
         }
 
         private void completeBattle(int reward, String rewardKind, String outcome) {
             if (battleRewardGranted || player == null) return;
             battleRewardGranted = true;
+            GameAudio.play(reward > 0
+                ? ("capture".equals(rewardKind) ? GameAudio.Cue.CATCH : GameAudio.Cue.VICTORY)
+                : (outcome.startsWith("You escaped") ? GameAudio.Cue.BACK : GameAudio.Cue.DEFEAT));
             int oldLevel = SAVE.level(player);
             int oldMaxHp = player.maxHp;
             if (reward > 0) SAVE.addExperience(player, reward);
@@ -2404,6 +2762,7 @@ public final class BattleDemo {
                 }
             }
             syncGameProgressToPack();
+            if (player.level > oldLevel) GameAudio.play(GameAudio.Cue.LEVEL_UP);
             String levelText = player.level > oldLevel ? " Level up! " + player.name + " is now Lv. " + player.level + "." : "";
             String rewardText = reward > 0 ? " +" + reward + " " + rewardKind + " XP." : " No XP earned.";
             if (coinReward > 0) rewardText += " +" + coinReward + " Luma Coins.";
@@ -2445,6 +2804,7 @@ public final class BattleDemo {
         }
 
         private void updateMenuFocus(int mouseX, int mouseY) {
+            int oldFocus = menuFocus;
             int[] point = toVirtual(mouseX, mouseY);
             if (phase == Phase.ETHICS_QUESTION && point[0] >= 48 && point[0] <= 627 && point[1] >= 439 && point[1] <= 526) {
                 menuFocus = Math.min(2, Math.max(0, (point[1] - 439) / 30));
@@ -2469,6 +2829,7 @@ public final class BattleDemo {
                     repaint();
                 }
             }
+            if (menuFocus != oldFocus) GameAudio.play(GameAudio.Cue.FOCUS);
         }
 
         private void handleMenuClick(int mouseX, int mouseY) {
@@ -2536,7 +2897,13 @@ public final class BattleDemo {
                 tick++;
                 syncDialog();
                 if (isDialogActive() && !dialogDismissed && visibleDialogChars < lastDialogText.length()) {
+                    int previousVisibleChars = visibleDialogChars;
                     visibleDialogChars = Math.min(lastDialogText.length(), visibleDialogChars + 2);
+                    typewriterSoundCounter += visibleDialogChars - previousVisibleChars;
+                    if (typewriterSoundCounter >= 8) {
+                        typewriterSoundCounter -= 8;
+                        GameAudio.play(GameAudio.Cue.TEXT_TICK);
+                    }
                 }
             if (phase != Phase.SELECT && phase != Phase.COMMAND && phase != Phase.MOVE_SELECT
                     && phase != Phase.CAPSULE_SELECT && phase != Phase.ETHICS_QUESTION && phase != Phase.ETHICS_FEEDBACK
@@ -2556,6 +2923,7 @@ public final class BattleDemo {
                     message = player.name + " returns to its capsule in a shimmer of light.";
                 } else {
                     phase = Phase.SUMMONING;
+                    GameAudio.play(GameAudio.Cue.CAPSULE_OPEN);
                     frameNo = 0;
                     message = "{C:#2C765B}{ALLY}{/C}'s capsule opens!";
                 }
@@ -2583,6 +2951,7 @@ public final class BattleDemo {
                         phase = Phase.RECALL_ENEMY; frameNo = 0;
                         message = "{C:#2C765B}{BEAST}{/C} joined your capsules!";
                     } else {
+                        GameAudio.play(GameAudio.Cue.CAPSULE_BREAK);
                         phase = Phase.ANIMATING; frameNo = 0;
                         enemyTurnPendingAfterCapture = true;
                         captureBreakEffect = true;
@@ -2628,6 +2997,7 @@ public final class BattleDemo {
         private void applyMove() {
             if (capturing || move == null) return;
             if (move.kind == Kind.DAMAGE) {
+                GameAudio.play(GameAudio.Cue.ATTACK_IMPACT);
                 int damage = 13 + random.nextInt(8) + (player.level - 1) * 2;
                 if (player.buffTurns > 0) damage += 4;
                 if (enemy.weakenedTurns > 0) damage = (int) Math.round(damage * 1.3);
@@ -2637,9 +3007,11 @@ public final class BattleDemo {
                 if (enemy.weakenedTurns > 0) enemy.weakenedTurns--;
                 arenaMessage(move.name + " hit for " + damage + " damage!" + (effectiveness > 1.0 ? " Super effective!" : ""));
             } else if (move.kind == Kind.BUFF) {
+                GameAudio.play(GameAudio.Cue.BUFF);
                 player.buffTurns = 3;
                 arenaMessage(player.name + " powered up. Its attacks are stronger for 3 turns!");
             } else {
+                GameAudio.play(GameAudio.Cue.ATTUNE);
                 enemy.weakenedTurns = 3;
                 arenaMessage(enemy.name + "'s guard fell for 3 turns!");
             }
@@ -2657,6 +3029,7 @@ public final class BattleDemo {
                 : enemy.moves.get(random.nextInt(enemy.moves.size()));
             pendingEnemyMove = null;
             move = counter;
+            if (counter.kind == Kind.DAMAGE) GameAudio.play(GameAudio.attackCue(counter.type));
             effectKind = Kind.DAMAGE; effectActor = enemy;
             phase = Phase.ANIMATING; frameNo = 0;
             message = enemy.name + " is preparing " + counter.name + "!";
@@ -2665,6 +3038,7 @@ public final class BattleDemo {
         private void applyEnemyMove() {
             if (move == null) return;
             if (move.kind == Kind.DAMAGE) {
+                GameAudio.play(GameAudio.Cue.ATTACK_IMPACT);
                 int damage = 8 + random.nextInt(8) + (enemy.level - 1) * 2;
                 if (enemy.buffTurns > 0) damage += 4;
                 if (player.weakenedTurns > 0) damage += 4;
@@ -2673,9 +3047,11 @@ public final class BattleDemo {
                 player.hp = Math.max(0, player.hp - damage);
                 message = enemy.name + " used " + move.name + " for " + damage + " damage!" + (effectiveness > 1.0 ? " Super effective!" : "");
             } else if (move.kind == Kind.BUFF) {
+                GameAudio.play(GameAudio.Cue.BUFF);
                 enemy.buffTurns = 3;
                 message = enemy.name + " used " + move.name + " to strengthen its next attacks!";
             } else {
+                GameAudio.play(GameAudio.Cue.ATTUNE);
                 player.weakenedTurns = 3;
                 message = enemy.name + " used " + move.name + ". Your guard is weakened for 3 turns.";
             }

@@ -8,7 +8,7 @@
       "mainClass": "Main",
       "cwd": "${workspaceFolder}",
       "classPaths": [
-        "${workspaceFolder}/out"
+        "${workspaceFolder}/out-cinematic"
       ],
       "preLaunchTask": "Build Echoes of Luma Battle Demo"
     },
@@ -19,7 +19,7 @@
       "mainClass": "echoesofluma.CreaturePC",
       "cwd": "${workspaceFolder}",
       "classPaths": [
-        "${workspaceFolder}/out"
+        "${workspaceFolder}/out-cinematic"
       ],
       "preLaunchTask": "Build Echoes of Luma Battle Demo"
     }

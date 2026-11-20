@@ -1,3 +1,4 @@
 *.class
 /bin/
-
+/out/
+/out-cinematic/

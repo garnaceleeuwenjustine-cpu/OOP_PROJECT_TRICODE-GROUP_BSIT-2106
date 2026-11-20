@@ -16,6 +16,7 @@ The main project launches through `src/Main.java`. The standalone **Preview Memb
 - Open **Bag & Items** from the game menu, or choose **Bag** during battle.
 - Use **1–3** to answer an ethics question and **1–8** to select a capsule.
 - Use **Enter**, **Space**, or **Z** to advance story and battle dialogue.
+- Buttons have original retro sound effects for focus, clicks, attacks, capsules, healing, and battle results. Toggle sound in **Settings**.
 
 ## Project structure
 
